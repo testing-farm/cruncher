@@ -1,0 +1,17 @@
+**/*~
+**/*.pyc
+**/*.pyo
+
+build
+dist
+
+libatt.egg-info
+*.sw[a-z]
+.ropeproject
+*.egg-info
+.eggs
+.cache
+.tox
+
+# Ansible "retry" files
+*.retry
