@@ -522,6 +522,8 @@ def inv_host(image):
         variables["ansible_python_interpreter"] = ansible_python_interpreter
         # Update inventory file
         write_debug_inventory(inventory, {image: variables})
+        # add pic
+        variables["pid"] = proc.pid
         return variables
     # Daemonize and watch the processes
     os.chdir("/")
@@ -554,13 +556,13 @@ def inv_host(image):
                 os.kill(ppid, 0)
                 os.kill(proc.pid, 0)
             except OSError:
-                logger.info("Either parent process or VM process is gone.")
+                # logger.info("Either parent process or VM process is gone.")
                 break
     if diagnose:
         def _signal_handler(*args):
             logger.info("Diagnose ending.")
         signal.signal(signal.SIGTERM, _signal_handler)
-        logger.info("kill {0} # when finished to debug VM.".format(os.getpid()))
+        # logger.info("kill {0} # when finished to debug VM.".format(os.getpid()))
         signal.pause()
     # Kill the qemu process
     try:

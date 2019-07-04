@@ -1,0 +1,4 @@
+[default]
+color = yes
+module-config-path = configuration
+module-path = modules
