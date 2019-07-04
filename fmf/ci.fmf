@@ -1,0 +1,6 @@
+---
+/test/sanity:
+  execute:
+    how: shell
+    command:
+      - packit --help
