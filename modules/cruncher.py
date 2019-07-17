@@ -11,7 +11,7 @@ import gluetool
 
 from gluetool.utils import cached_property, check_for_commands, from_json, log_blob, log_dict, Command, PatternMap
 
-REQUIRED_CMDS = ['copr']
+REQUIRED_CMDS = ['copr', 'curl']
 
 
 class Guest(object):
@@ -43,7 +43,7 @@ class Guest(object):
 
             raise gluetool.GlueError("Failed to connect to guest '{}' via ssh".format(self.user_host))
 
-    def run(self, command, inspect=False):
+    def run(self, command):
         ssh_command = [
             'ssh',
             '-o', 'StrictHostKeyChecking=no',
@@ -58,10 +58,13 @@ class Guest(object):
         process = subprocess.Popen(ssh_command, stderr=subprocess.STDOUT)
 
         try:
-            process.communicate()
+            stdout, stderr = process.communicate()
 
         except subprocess.CalledProcessError as error:
-            raise gluetool.GlueCommandError(command, error.output)
+            raise gluetool.GlueCommandError(command, stdout)
+
+        if process.returncode != 0:
+            raise gluetool.GlueCommandError(command, stdout)
 
 class Cruncher(gluetool.Module):
     name = 'cruncher'
@@ -69,10 +72,6 @@ class Cruncher(gluetool.Module):
 
     options = [
         ('Copr options', {
-            #'copr-build-id': {
-            #    'help': 'Copr build ID',
-            #    'type': int
-            #},
             'copr-chroot': {
                 'help': 'Chroot identification'
             },
@@ -83,6 +82,13 @@ class Cruncher(gluetool.Module):
         ('Image options', {
             'chroot-image-map': {
                 'help': 'Chroot to image mapping file'
+            },
+            'image-cache-dir': {
+                'help': 'Image download path'
+            },
+            'no-progress': {
+                'help': 'Do not show image download progress',
+                'action': 'store_true'
             }
         }),
         ('Test options', {
@@ -136,27 +142,35 @@ class Cruncher(gluetool.Module):
         """
         Maps copr chroot to a specific image.
         """
-        return PatternMap(self.option('chroot-image-map'), logger=self.logger).match(self.option('copr-chroot'))
+        image_url = PatternMap(self.option('chroot-image-map'), logger=self.logger).match(self.option('copr-chroot'))
 
-    def download_copr_build(self):
-        """
-        Downloads copr directory to the given workdir.
-        """
-        build_id = str(self.option('copr-build-id'))
-        chroot = self.option('copr-chroot')
+        cache_dir = self.option('image-cache-dir')
+        image_name = os.path.basename(image_url)
+        download_path = os.path.join(cache_dir, image_name)
 
-        command = ['copr', 'download-build', '--chroot', chroot, build_id]
+        # check if image already exits
+        if os.path.exists(download_path):
+            return download_path
+
+        self.info("Downloading image '{}' to '{}'".format(image_url, download_path))
+
+        command = ['curl']
+
+        if self.option('no-progress'):
+            command.append('-s')
+
+        command.extend([
+            '-kLo', download_path,
+            image_url
+        ])
 
         try:
-            self.info("Downloading copr build id '{}' chroot '{}'".format(build_id, chroot))
-
-            Command(command).run(cwd=self.workdir)
+            Command(command).run(inspect=True)
 
         except gluetool.GlueCommandError as error:
+            raise gluetool.GlueError('Could not download image: {}'.format(error))
 
-            log_blob(self.error, "Last 30 lines stderr of '{}'".format(' '.join(command)), error.output.stderr)
-
-            raise gluetool.GlueError('Failed to download copr build')
+        return download_path
 
     def provision(self):
 
@@ -227,19 +241,17 @@ class Cruncher(gluetool.Module):
 
         self.info('Using image: {}'.format(self.image))
 
-        # Download copr build
-        # self.download_copr_build()
-
         # Provision qcow2
         self.guest = self.provision()
 
         self.info('Installing builds from copr')
 
         # Enable copr repository
-        self.guest.run('dnf -y copr enable {}'.format(self.option('copr-name')), inspect=True)
+        self.guest.run('dnf -y copr enable {}'.format(self.option('copr-name')))
 
         # Install all build from copr repository
-        self.guest.run('dnf -q repoquery --disablerepo=* --enablerepo=packit-packit-service-packit-316 | grep -v \.src | xargs dnf -y install', inspect=True)
+        # pylint: disable=line-too-lon
+        self.guest.run('dnf -q repoquery --disablerepo=* --enablerepo={} | grep -v \.src | xargs dnf -y install'.format(self.option('copr-name').replace('/', '-')))
 
         # Run tests
         self.run_fmf_tests()

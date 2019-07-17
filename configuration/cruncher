@@ -1,3 +1,4 @@
 [default]
-chroot-image-map = /home/mvadkert/git/gitlab.com/flock-prototype/configuration/chroot-image-map.yaml
-provision-script = /home/mvadkert/git/gitlab.com/flock-prototype/tools/standard-inventory-qcow2
+chroot-image-map = configuration/chroot-image-map.yaml
+provision-script = tools/standard-inventory-qcow2
+image-cache-dir = images

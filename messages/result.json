@@ -1,0 +1,37 @@
+# topic: org.centos.prod.testing-farm.result 
+#
+# results will be send in the following format
+{
+  "pipeline": {
+    "id": "43e310b6-c1f1-4d3e-a95c-6c1eca235296"
+  },
+  "environment": {
+    "image": "Fedora-Cloud-Base-29-1.2.x86_64.qcow2"
+  },
+  "artifact": {
+    "type": "fedora-copr-build",
+    "id": "34333232:fedora-x86_64",
+    "repo": "packit/packit-servvice-16",
+    "chroot": "fedora-x86_64"
+  },
+  # overall result, one of failed/passed/error/running
+  #   running = test in progress
+  #   error = failed to run tests (infrastructure error, etc.)
+  #   passed = all tests passed
+  #   failed = all tests failed
+  "result": "failed",
+  # tests can be an empty array if result is "error"
+  "tests": [
+    {
+      "name": "test1",
+      # result of a specific test, one of failed/passed/error/running
+      "result": "failed",
+      "log": "https://somewhere.com/43e310b6/artifacts/test1.log"
+    },
+    {
+      "name": "test2",
+      "result": "passed",
+      "log": "https://somewhere.com/43e310b6/artifacts/test2.log"
+    }
+  ]
+}

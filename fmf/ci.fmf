@@ -3,4 +3,5 @@
   execute:
     how: shell
     command:
-      - packit --help
+      - bash --version
+      - packit --version
