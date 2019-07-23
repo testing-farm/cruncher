@@ -1,0 +1,25 @@
+---
+/test/sanity/something:
+  execute:
+    how: shell
+    commands:
+      - bash --help
+      - for i in a b c; do echo $i; done
+      - dnf repolist
+      - exit 1
+
+/test/sanity/other:
+  execute:
+    how: shell
+    commands:
+      - bash --help
+      - for i in a b c; do echo $i; done
+      - dnf repolist
+
+/test/insanity:
+  execute:
+    how: shell
+    commands:
+      - bash --help
+      - for i in a b c; do echo $i; done
+      - dnf repolist

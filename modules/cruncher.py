@@ -1,5 +1,6 @@
 import colorama
 import fmf
+import jinja2
 import os
 import shutil
 import subprocess
@@ -9,9 +10,23 @@ from exceptions import OSError
 
 import gluetool
 
-from gluetool.utils import cached_property, check_for_commands, from_json, log_blob, log_dict, Command, PatternMap
+# pylint: disable=line-too-long
+from gluetool.utils import cached_property, check_for_commands, from_json, log_blob, log_dict, requests, render_template, Command, SimplePatternMap
 
-REQUIRED_CMDS = ['copr', 'curl']
+
+def get_url_content(url):
+    with requests() as req:
+        response = req.get(url)
+
+    response.raise_for_status()
+
+    return response.content
+
+
+jinja2.defaults.DEFAULT_FILTERS['get_url_content'] = get_url_content
+
+
+REQUIRED_CMDS = ['copr', 'curl', 'ansible-playbook']
 
 
 class Guest(object):
@@ -47,6 +62,8 @@ class Guest(object):
         ssh_command = [
             'ssh',
             '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'LogLevel=ERROR',
             '-i', self.key,
             '-p', self.port,
             self.user_host,
@@ -57,21 +74,40 @@ class Guest(object):
 
         process = subprocess.Popen(ssh_command, stderr=subprocess.STDOUT)
 
-        try:
-            stdout, stderr = process.communicate()
-
-        except subprocess.CalledProcessError as error:
-            raise gluetool.GlueCommandError(command, stdout)
+        stdout, stderr = process.communicate()
 
         if process.returncode != 0:
-            raise gluetool.GlueCommandError(command, stdout)
+            raise gluetool.GlueError("Command '{}' failed with return code '{}'".format(command, process.returncode))
+
+    def run_playbook(self, playbook):
+        self.info("Running playbook '{}'".format(playbook))
+
+        command = [
+            'ansible-playbook',
+            '-i', '{},'.format(self.user_host),
+            '--ssh-common-args=\'-i{}\''.format(self.key),
+            '--ssh-extra-args=\'-p{}\''.format(self.port),
+            '--scp-extra-args=\'-P{}\''.format(self.port),
+            '--sftp-extra-args=\'-P{}\''.format(self.port),
+            playbook
+        ]
+
+        self.info(' '.join(command))
+
+        process = subprocess.Popen(command, stderr=subprocess.STDOUT)
+
+        stdout, stderr = process.communicate()
+
+        if process.returncode != 0:
+            raise gluetool.GlueError("Playbook '{}' failed with return code '{}'".format(command, process.returncode))
+
 
 class Cruncher(gluetool.Module):
     name = 'cruncher'
     description = 'Cruncher for FMF flock prototype'
 
     options = [
-        ('Copr options', {
+        ('Copr artifact options', {
             'copr-chroot': {
                 'help': 'Chroot identification'
             },
@@ -79,10 +115,18 @@ class Cruncher(gluetool.Module):
                 'help': 'Copr repository name'
             }
         }),
-        ('Image options', {
-            'chroot-image-map': {
-                'help': 'Chroot to image mapping file'
+        ('Image specification options', {
+            'image-copr-chroot-map': {
+                'help': 'Use image according to copr chroot specified by the given mapping file'
             },
+            'image-url': {
+                'help': 'Use image from given URL'
+            },
+            'image-file': {
+                'help': 'Use image from give file'
+            },
+        }),
+        ('Image download options', {
             'image-cache-dir': {
                 'help': 'Image download path'
             },
@@ -125,8 +169,6 @@ class Cruncher(gluetool.Module):
         })
     ]
 
-    required_options = ['chroot-image-map', 'copr-chroot', 'copr-name']
-
     def __init__(self, *args, **kwargs):
         super(Cruncher, self).__init__(*args, **kwargs)
 
@@ -134,25 +176,46 @@ class Cruncher(gluetool.Module):
 
         self.workdir = None
         self.guest = None
+        self.image = None
 
         colorama.init(autoreset=True)
 
-    @cached_property
-    def image(self):
+    def sanity(self):
+
+        self.image = self.option('image-file')
+
+        # Use image from path
+        if self.image:
+            self.info("Using image from file '{}'".format(self.image))
+            return
+
+        # Use image from url
+        image_url = self.option('image-url')
+
+        # Map image from copr repository
+        if self.option('image-copr-chroot-map') and self.option('copr-chroot'):
+            image_url = render_template(SimplePatternMap(self.option('image-copr-chroot-map'), logger=self.logger).match(self.option('copr-chroot')))
+
+        if image_url:
+            self.image = self.image_from_url(image_url)
+            return
+
+        if not image_url and not self.option('ssh-host'):
+            raise gluetool.utils.IncompatibleOptionsError('No image, SSH host or copr repository specified. Cannot continue.')
+
+    def image_from_url(self, url):
         """
         Maps copr chroot to a specific image.
         """
-        image_url = PatternMap(self.option('chroot-image-map'), logger=self.logger).match(self.option('copr-chroot'))
-
         cache_dir = self.option('image-cache-dir')
-        image_name = os.path.basename(image_url)
+        image_name = os.path.basename(url)
         download_path = os.path.join(cache_dir, image_name)
 
         # check if image already exits
         if os.path.exists(download_path):
             return download_path
 
-        self.info("Downloading image '{}' to '{}'".format(image_url, download_path))
+        self.info("Downloading image '{}' to '{}'".format(url, download_path))
 
         command = ['curl']
 
@@ -160,19 +223,22 @@ class Cruncher(gluetool.Module):
             command.append('-s')
 
         command.extend([
-            '-kLo', download_path,
-            image_url
+            '-fkLo', download_path,
+            url
         ])
 
         try:
             Command(command).run(inspect=True)
 
         except gluetool.GlueCommandError as error:
+            # make sure that we remove the image file
+            os.unlink(download_path)
+
             raise gluetool.GlueError('Could not download image: {}'.format(error))
 
         return download_path
 
-    def provision(self):
+    def provision(self, image):
 
         # init an existing ...
         if self.option('ssh-host'):
@@ -180,7 +246,7 @@ class Cruncher(gluetool.Module):
 
         script = self.option('provision-script')
 
-        command = ['python3', script, self.image]
+        command = ['python3', script, image]
         environment = os.environ.copy()
 
         environment.update({'TEST_DEBUG': '1'})
@@ -223,7 +289,7 @@ class Cruncher(gluetool.Module):
 
         self.info('Working directory: {}'.format(self.workdir))
 
-    def run_fmf_tests(self):
+    def process_fmf(self):
         fmf_root = self.option('fmf-root')
 
         if not fmf_root:
@@ -231,18 +297,26 @@ class Cruncher(gluetool.Module):
 
         tree = fmf.Tree(fmf_root)
 
-        for test in tree.climb():
-            execute = test.get('execute')
+        for testset in tree.climb():
+            self.info("Processing test set: '{}'".format(testset.name))
 
-            for command in execute['command']:
-                self.guest.run(command)
+            prepare = testset.get('prepare')
 
-    def execute(self):
+            if prepare and prepare.get('how') == 'ansible':
+                self.guest.run('dnf -y install python')
 
-        self.info('Using image: {}'.format(self.image))
+                for playbook in prepare.get('playbooks'):
+                    self.guest.run_playbook(os.path.join(fmf_root, playbook))
 
-        # Provision qcow2
-        self.guest = self.provision()
+            execute = testset.get('execute')
+
+            if execute:
+                for command in execute['commands']:
+                    self.guest.run(command)
+
+    def install_copr_build(self):
+        if not self.option('copr-name'):
+            return
 
         self.info('Installing builds from copr')
 
@@ -253,8 +327,16 @@ class Cruncher(gluetool.Module):
         # pylint: disable=line-too-lon
         self.guest.run('dnf -q repoquery --disablerepo=* --enablerepo={} | grep -v \.src | xargs dnf -y install'.format(self.option('copr-name').replace('/', '-')))
 
+    def execute(self):
+
+        # Provision qcow2
+        self.guest = self.provision(self.image)
+
+        # Install copr build
+        self.install_copr_build()
+
         # Run tests
-        self.run_fmf_tests()
+        self.process_fmf()
 
     def destroy(self, failure):
 
@@ -264,6 +346,7 @@ class Cruncher(gluetool.Module):
             self.info("Use 'ssh -i {} -p {} root@{}' to connect to the VM".format(self.guest.key, self.guest.port, self.guest.host))
 
         else:
+            self.info('Destroying VM instance')
             # Try to remove VM
             try:
                 Command(['pkill', '-9', 'qemu']).run()

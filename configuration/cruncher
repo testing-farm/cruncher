@@ -1,4 +1,4 @@
 [default]
-chroot-image-map = configuration/chroot-image-map.yaml
+image-copr-chroot-map = configuration/chroot-image-map.yaml
 provision-script = tools/standard-inventory-qcow2
 image-cache-dir = images

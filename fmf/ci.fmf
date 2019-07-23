@@ -1,7 +1,0 @@
----
-/test/sanity:
-  execute:
-    how: shell
-    command:
-      - bash --version
-      - packit --version
