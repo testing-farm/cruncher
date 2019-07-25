@@ -53,7 +53,7 @@ class Guest(object):
             output = Command(command).run()
 
         except gluetool.GlueCommandError as error:
-        
+
             log_blob(self.error, "Last 30 lines of '{}'".format(' '.join(command)), error.output.stderr)
 
             raise gluetool.GlueError("Failed to connect to guest '{}' via ssh".format(self.user_host))
@@ -80,7 +80,7 @@ class Guest(object):
             raise gluetool.GlueError("Command '{}' failed with return code '{}'".format(command, process.returncode))
 
     def run_playbook(self, playbook):
-        self.info("Running playbook '{}'".format(playbook))
+        self.info("Prepare: Running playbook '{}'".format(playbook))
 
         command = [
             'ansible-playbook',
@@ -100,6 +100,192 @@ class Guest(object):
 
         if process.returncode != 0:
             raise gluetool.GlueError("Playbook '{}' failed with return code '{}'".format(command, process.returncode))
+
+
+class TestSet(object):
+    """ Testset object handling individual steps """
+
+    # Working directories (shared and testset-specific)
+    _shared_workdir = None
+    _workdir = None
+
+    def __init__(self, testset, cruncher):
+        """ Initialize testset steps """
+        if testset.get('summary'):
+            cruncher.info("Testset: {} ({})".format(testset.get('summary'), testset.name))
+        else:
+            cruncher.info("Testset: {}".format(testset.name))
+
+        # Initialize values
+        self.cruncher = cruncher
+        self.testset = testset
+        self.tests = None
+        self.guest = None
+
+        # Execute step should be defined
+        if not self.testset.get('execute'):
+            raise gluetool.GlueError('No "execute" step in the testset {}'.format(testset.name))
+
+    def go(self):
+        """ Go and process the testset step by step """
+        self.discover()
+        self.provision()
+        self.prepare()
+        self.execute()
+        self.report()
+        self.finish()
+
+    @property
+    def workdir(self):
+        """ Testset working directory under the shared workdir """
+
+        # Nothing to do if directory already created
+        if self._workdir is not None:
+            return self._workdir
+
+        # Use provided shared workdir or create one in the current directory
+        if TestSet._shared_workdir is None:
+            workdir = self.cruncher.option('workdir')
+            if workdir:
+                self.cruncher.info('Using working directory: {}'.format(workdir))
+            else:
+                prefix = 'workdir-{}-'.format(self.cruncher.option('copr-chroot'))
+                try:
+                    workdir = tempfile.mkdtemp(prefix=prefix, dir='.')
+                except OSError as error:
+                    raise gluetool.GlueError('Could not create working directory: {}'.format(error))
+                self.cruncher.info('Working directory created: {}'.format(workdir))
+            TestSet._shared_workdir = workdir
+
+        # Create testset-specific subdirectory
+        self._workdir = os.path.join(
+            TestSet._shared_workdir, self.testset.name.replace('/', '-').lstrip('-'))
+        try:
+            os.mkdir(self._workdir)
+        except OSError, error:
+            raise gluetool.GlueError('Could not create working directory: {}'.format(error))
+        return self._workdir
+
+    def discover(self):
+        """ Discover tests for execution """
+        discover = self.testset.get('discover')
+        if not discover:
+            return
+        # FMF
+        if discover.get('how') == 'fmf':
+            # Clone the git repository
+            repository = discover.get('repository')
+            if not repository:
+                raise gluetool.GlueError("No repository defined in the discover step")
+            self.cruncher.info("Discover: Checking repository '{}'".format(repository))
+            try:
+                command = ['git', 'clone', repository, 'tests']
+                output = Command(command).run(cwd=self.workdir)
+            except gluetool.GlueCommandError as error:
+                log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
+                raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
+            # Pick tests based on the fmf filter
+            tree = fmf.Tree(os.path.join(self.workdir, 'tests'))
+            filters = discover.get('filter')
+            self.tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
+            log_dict(self.cruncher.info, "Discovered tests", [test.name for test in self.tests])
+
+    def provision(self):
+        """ Provision the guest """
+
+        # Use an already running instance if provided
+        if self.cruncher.option('ssh-host'):
+            self.cruncher.info("Provision: Using provided running instance '{}'".format(
+                self.cruncher.option('ssh-host')))
+            self.guest = Guest(
+                self.cruncher,
+                self.cruncher.option('ssh-host'),
+                self.cruncher.option('ssh-key'),
+                self.cruncher.option('ssh-port'))
+            return
+
+        # Create a new instance using the provision script
+        self.cruncher.info("Provision: Booting image '{}'".format(self.cruncher.image))
+        command = ['python3', self.cruncher.option('provision-script'), self.cruncher.image]
+        environment = os.environ.copy()
+        environment.update({'TEST_DEBUG': '1'})
+        try:
+            output = Command(command).run(env=environment)
+        except gluetool.GlueCommandError as error:
+            log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
+            raise gluetool.GlueError("Failed to boot image '{}'".format(self.cruncher.image))
+
+        # Store provision details and create the guest
+        details = from_json(output.stdout)
+        log_dict(self.cruncher.debug, 'provisioning details', details)
+        host = details['localhost']['hosts'][0]
+        host_details = details['_meta']['hostvars'][host]
+        self.guest = Guest(
+            self.cruncher,
+            host_details['ansible_host'],
+            key=host_details['ansible_ssh_private_key_file'],
+            port=host_details['ansible_port'])
+
+    def install_copr_build(self):
+        """ Install packages from copr """
+        # Nothing to do if copr-name not provided
+        if not self.cruncher.option('copr-name'):
+            return
+
+        # Enable copr repository and install all builds from there
+        self.guest.run('dnf -y copr enable {}'.format(self.cruncher.option('copr-name')))
+        self.guest.run(
+            'dnf -q repoquery --disablerepo=* --enablerepo={} | grep -v \.src |'
+            'xargs dnf -y install'.format(self.cruncher.option('copr-name').replace('/', '-')))
+
+    def prepare(self):
+        """ Prepare the guest for testing """
+        # Install copr build
+        self.cruncher.info('Prepare: Installing builds from copr')
+        self.install_copr_build()
+
+        # Handle the prepare step
+        prepare = self.testset.get('prepare')
+        if not prepare:
+            return
+        if prepare.get('how') == 'ansible':
+            self.cruncher.info('Prepare: Applying ansible playbooks')
+            self.guest.run('dnf -y install python')
+            for playbook in prepare.get('playbooks'):
+                self.guest.run_playbook(os.path.join(self.cruncher.fmf_root, playbook))
+
+    def execute(self):
+        """ Execute discovered tests """
+        execute = self.testset.get('execute')
+        # Shell
+        if execute.get('how') == 'shell':
+            self.cruncher.info('Execute: Running shell commands')
+            for command in execute['commands']:
+                self.guest.run(command)
+        # Beakerlib
+        if execute.get('how') == 'beakerlib':
+            self.cruncher.info('Execute: Running beakerlib tests')
+            self.guest.run('dnf -y install beakerlib')
+
+    def report(self):
+        """ Report results """
+
+    def finish(self):
+        """ Finishing tasks """
+        # Keep the vm running
+        if self.cruncher.option('keep-instance') or self.cruncher.option('ssh-host'):
+            self.cruncher.info("Finish: Guest kept running, use "
+                "'--ssh-host={} --ssh-key={} --ssh-port={}' to connect back with cruncher".format(
+                self.guest.host, self.guest.key, self.guest.port))
+            self.cruncher.info("Finish: Use 'ssh -i {} -p {} root@{}' to connect to the VM".format(
+                self.guest.key, self.guest.port, self.guest.host))
+        # Destroy the vm
+        else:
+            self.cruncher.info('Finish: Destroying VM instance')
+            try:
+                Command(['pkill', '-9', 'qemu']).run()
+            except gluetool.GlueCommandError:
+                pass
 
 
 class Cruncher(gluetool.Module):
@@ -174,7 +360,6 @@ class Cruncher(gluetool.Module):
 
         check_for_commands(REQUIRED_CMDS)
 
-        self.workdir = None
         self.guest = None
         self.image = None
 
@@ -194,14 +379,16 @@ class Cruncher(gluetool.Module):
 
         # Map image from copr repository
         if self.option('image-copr-chroot-map') and self.option('copr-chroot'):
-            image_url = render_template(SimplePatternMap(self.option('image-copr-chroot-map'), logger=self.logger).match(self.option('copr-chroot')))
+            image_url = render_template(SimplePatternMap(
+                self.option('image-copr-chroot-map'), logger=self.logger).match(self.option('copr-chroot')))
 
         if image_url:
             self.image = self.image_from_url(image_url)
             return
 
         if not image_url and not self.option('ssh-host'):
-            raise gluetool.utils.IncompatibleOptionsError('No image, SSH host or copr repository specified. Cannot continue.')
+            raise gluetool.utils.IncompatibleOptionsError(
+                'No image, SSH host or copr repository specified. Cannot continue.')
 
     def image_from_url(self, url):
         """
@@ -238,149 +425,24 @@ class Cruncher(gluetool.Module):
 
         return download_path
 
-    def provision(self, image):
-
-        # init an existing ...
-        if self.option('ssh-host'):
-            return Guest(self, self.option('ssh-host'), self.option('ssh-key'), self.option('ssh-port'))
-
-        script = self.option('provision-script')
-
-        command = ['python3', script, image]
-        environment = os.environ.copy()
-
-        environment.update({'TEST_DEBUG': '1'})
-
-        try:
-            self.info("Booting image '{}'".format(self.image))
-
-            output = Command(command).run(cwd=self.workdir, env=environment)
-
-        except gluetool.GlueCommandError as error:
-
-            log_blob(self.error, "Last 30 lines of stderr '{}'".format(' '.join(command)), error.output.stderr)
-
-            raise gluetool.GlueError("Failed to boot image '{}'".format(self.image))
-
-        details = from_json(output.stdout)
-
-        log_dict(self.debug, 'provisioning details', details)
-
-        host = details['localhost']['hosts'][0]
-        host_details = details['_meta']['hostvars'][host]
-        guest = Guest(self, host_details['ansible_host'],
-                            key=host_details['ansible_ssh_private_key_file'],
-                            port=host_details['ansible_port'])
-
-        return guest
-
-    def create_workdir(self):
-        self.workdir = self.option('workdir')
-
-        if not self.workdir:
-            # Create working directory in the current dir
-            prefix = 'build-{}-{}'.format(str(self.option('copr-build-id')), self.option('copr-chroot'))
-
-            try:
-                self.workdir = tempfile.mkdtemp(prefix=prefix, dir='.')
-
-            except OSError as e:
-                raise gluetool.GlueError('Could not create working directory: {}'.format(e))
-
-        self.info('Working directory: {}'.format(self.workdir))
-
-    def process_fmf(self):
-        """ Process all testsets defined in L2 metadata """
-        # Initialize the metadata tree
-        fmf_root = self.option('fmf-root')
-        if not fmf_root:
-            return
-        tree = fmf.Tree(fmf_root)
-
-        # Process each testset found in the tree
-        for testset in tree.climb():
-            self.info("Processing test set: '{}'".format(testset.name))
-
-            # Discover tests
-            discover = testset.get('discover')
-            if discover and discover.get('how') == 'fmf':
-                # Clone the git repository
-                repository = discover.get('repository')
-                if not repository:
-                    raise gluetool.GlueError("No repository defined in the discover step")
-                self.info("Discover tests using fmf from the repository: {}".format(repository))
-                self.create_workdir()
-                try:
-                    command = ['git', 'clone', repository, 'tests']
-                    output = Command(command).run(cwd=self.workdir)
-                except gluetool.GlueCommandError as error:
-                    log_blob(self.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
-                    raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
-                # Pick tests based on the fmf filter
-                tree = fmf.Tree(os.path.join(self.workdir, 'tests'))
-                filters = discover.get('filter')
-                tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
-                log_dict(self.info, "Discovered tests", [test.name for test in tests])
-
-            # Prepare the guest
-            prepare = testset.get('prepare')
-            if prepare and prepare.get('how') == 'ansible':
-                self.guest.run('dnf -y install python')
-                for playbook in prepare.get('playbooks'):
-                    self.guest.run_playbook(os.path.join(fmf_root, playbook))
-
-            # Execute tests
-            execute = testset.get('execute')
-            if execute:
-                # Shell
-                if execute.get('how') == 'shell':
-                    for command in execute['commands']:
-                        self.guest.run(command)
-                # Beakerlib
-                if execute.get('how') == 'beakerlib':
-                    self.guest.run('dnf -y install beakerlib')
-
-    def install_copr_build(self):
-        if not self.option('copr-name'):
-            return
-
-        self.info('Installing builds from copr')
-
-        # Enable copr repository
-        self.guest.run('dnf -y copr enable {}'.format(self.option('copr-name')))
-
-        # Install all build from copr repository
-        # pylint: disable=line-too-lon
-        self.guest.run('dnf -q repoquery --disablerepo=* --enablerepo={} | grep -v \.src | xargs dnf -y install'.format(self.option('copr-name').replace('/', '-')))
 
     def execute(self):
+        """ Process all testsets defined """
+        # Initialize the metadata tree
+        self.fmf_root = self.option('fmf-root')
+        if not self.fmf_root:
+            self.info("Nothing to do, no fmf root provided")
+            return
+        tree = fmf.Tree(self.fmf_root)
 
-        # Provision qcow2
-        self.guest = self.provision(self.image)
-
-        # Install copr build
-        self.install_copr_build()
-
-        # Run tests
-        self.process_fmf()
+        # Process each testset found in the fmf tree
+        for testset in tree.climb():
+            testset = TestSet(testset, cruncher=self)
+            testset.go()
 
     def destroy(self, failure):
-
-        if self.option('keep-instance') or self.option('ssh-host'):
-            self.info("Guest kept running, use '--ssh-host={} --ssh-key={} --ssh-port={}' to connect back with cruncher".format(
-                self.guest.host, self.guest.key, self.guest.port))
-            self.info("Use 'ssh -i {} -p {} root@{}' to connect to the VM".format(self.guest.key, self.guest.port, self.guest.host))
-
-        else:
-            self.info('Destroying VM instance')
-            # Try to remove VM
-            try:
-                Command(['pkill', '-9', 'qemu']).run()
-            except gluetool.GlueCommandError:
-                pass
-
-        # Cleanup workdir if needed
-        if self.option('cleanup'):
-            self.info("Removing workdir '{}'".format(self.workdir))
-            shutil.rmtree(self.workdir)
-
+        """ Cleanup tasks """
+        # Remove workdir if requested
+        if self.option('cleanup') and TestSet._workdir:
+            self.info("Removing workdir '{}'".format(TestSet._workdir))
+            shutil.rmtree(TestSet._workdir)
