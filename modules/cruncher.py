@@ -26,7 +26,7 @@ def get_url_content(url):
 jinja2.defaults.DEFAULT_FILTERS['get_url_content'] = get_url_content
 
 
-REQUIRED_CMDS = ['copr', 'curl', 'ansible-playbook']
+REQUIRED_CMDS = ['copr', 'curl', 'ansible-playbook', 'git']
 
 
 class Guest(object):
@@ -290,29 +290,55 @@ class Cruncher(gluetool.Module):
         self.info('Working directory: {}'.format(self.workdir))
 
     def process_fmf(self):
+        """ Process all testsets defined in L2 metadata """
+        # Initialize the metadata tree
         fmf_root = self.option('fmf-root')
-
         if not fmf_root:
             return
-
         tree = fmf.Tree(fmf_root)
 
+        # Process each testset found in the tree
         for testset in tree.climb():
             self.info("Processing test set: '{}'".format(testset.name))
 
-            prepare = testset.get('prepare')
+            # Discover tests
+            discover = testset.get('discover')
+            if discover and discover.get('how') == 'fmf':
+                # Clone the git repository
+                repository = discover.get('repository')
+                if not repository:
+                    raise gluetool.GlueError("No repository defined in the discover step")
+                self.info("Discover tests using fmf from the repository: {}".format(repository))
+                self.create_workdir()
+                try:
+                    command = ['git', 'clone', repository, 'tests']
+                    output = Command(command).run(cwd=self.workdir)
+                except gluetool.GlueCommandError as error:
+                    log_blob(self.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
+                    raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
+                # Pick tests based on the fmf filter
+                tree = fmf.Tree(os.path.join(self.workdir, 'tests'))
+                filters = discover.get('filter')
+                tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
+                log_dict(self.info, "Discovered tests", [test.name for test in tests])
 
+            # Prepare the guest
+            prepare = testset.get('prepare')
             if prepare and prepare.get('how') == 'ansible':
                 self.guest.run('dnf -y install python')
-
                 for playbook in prepare.get('playbooks'):
                     self.guest.run_playbook(os.path.join(fmf_root, playbook))
 
+            # Execute tests
             execute = testset.get('execute')
-
             if execute:
-                for command in execute['commands']:
-                    self.guest.run(command)
+                # Shell
+                if execute.get('how') == 'shell':
+                    for command in execute['commands']:
+                        self.guest.run(command)
+                # Beakerlib
+                if execute.get('how') == 'beakerlib':
+                    self.guest.run('dnf -y install beakerlib')
 
     def install_copr_build(self):
         if not self.option('copr-name'):
