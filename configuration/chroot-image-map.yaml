@@ -1,11 +1,14 @@
 ---
-# Note: values are rendered as a template
+#
+# This file provides mapping of copr chroots to Fedora images
+#
 
 - 'fedora-29-x86_64': >
-    https://dl.fedoraproject.org/pub/fedora/linux/releases/29/Cloud/x86_64/images/Fedora-Cloud-Base-29-1.2.x86_64.qcow2'
+   https://dl.fedoraproject.org/pub/fedora/linux/releases/29/Cloud/x86_64/images/Fedora-Cloud-Base-29-1.2.x86_64.qcow2
 
 - 'fedora-30-x86_64': >
    https://dl.fedoraproject.org/pub/fedora/linux/releases/30/Cloud/x86_64/images/Fedora-Cloud-Base-30-1.2.x86_64.qcow2
 
+# Rawhide images change frequently. To find the Rawhide image, we lookup the compose ID and construct the image name according to it.
 - 'fedora-rawhide-x86_64': >
    https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/{{ "https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/COMPOSE_ID" | get_url_content | replace("Rawhide", "Cloud-Base-Rawhide") }}.x86_64.qcow2
