@@ -2,6 +2,7 @@ import colorama
 import fmf
 import jinja2
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -58,7 +59,7 @@ class Guest(object):
 
             raise gluetool.GlueError("Failed to connect to guest '{}' via ssh".format(self.user_host))
 
-    def run(self, command):
+    def run(self, command, pipe=False):
         ssh_command = [
             'ssh',
             '-o', 'StrictHostKeyChecking=no',
@@ -72,12 +73,15 @@ class Guest(object):
 
         print(colorama.Fore.CYAN + '# {}'.format(command))
 
-        process = subprocess.Popen(ssh_command, stderr=subprocess.STDOUT)
-
+        if pipe:
+            process = subprocess.Popen(ssh_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        else:
+            process = subprocess.Popen(ssh_command, stderr=subprocess.STDOUT)
         stdout, stderr = process.communicate()
 
         if process.returncode != 0:
             raise gluetool.GlueError("Command '{}' failed with return code '{}'".format(command, process.returncode))
+        return stdout, stderr
 
     def run_playbook(self, playbook):
         self.info("Prepare: Running playbook '{}'".format(playbook))
@@ -120,7 +124,11 @@ class TestSet(object):
         self.cruncher = cruncher
         self.testset = testset
         self.tests = None
+        self.results = dict()
         self.guest = None
+
+        # Dashed name of the testset without the /ci/test/ prefix
+        self.name = self.testset.name.lstrip('/ci/test/').replace('/', '-')
 
         # Execute step should be defined
         if not self.testset.get('execute'):
@@ -158,8 +166,7 @@ class TestSet(object):
             TestSet._shared_workdir = workdir
 
         # Create testset-specific subdirectory
-        self._workdir = os.path.join(
-            TestSet._shared_workdir, self.testset.name.replace('/', '-').lstrip('-'))
+        self._workdir = os.path.join(TestSet._shared_workdir, self.name)
         try:
             os.mkdir(self._workdir)
         except OSError, error:
@@ -254,6 +261,22 @@ class TestSet(object):
             for playbook in prepare.get('playbooks'):
                 self.guest.run_playbook(os.path.join(self.cruncher.fmf_root, playbook))
 
+    def execute_beakerlib_test(self, test, path):
+        """ Execute a beakerlib test """
+        self.cruncher.info('Execute: Running test {}'.format(test.name))
+        test_dir = os.path.join(path, 'tests', (test.get('path') or test.name.lstrip('/')))
+        logs_dir = os.path.join(path, 'logs', test.name.lstrip('/').replace('/', '-'))
+        stdout, stderr = self.guest.run('cd {}; mkdir -p {}; BEAKERLIB_DIR={} {}'.format(
+            test_dir, logs_dir, logs_dir, test.get('test')))
+        journal, stderr = self.guest.run('cat {}'.format(os.path.join(logs_dir, 'journal.txt')), pipe=True)
+        if re.search("OVERALL RESULT: PASS", journal):
+            result = "pass"
+        elif re.search("OVERALL RESULT: FAIL", journal):
+            result = "fail"
+        else:
+            result = "error"
+        self.results[test.name] = result
+
     def execute(self):
         """ Execute discovered tests """
         execute = self.testset.get('execute')
@@ -264,11 +287,23 @@ class TestSet(object):
                 self.guest.run(command)
         # Beakerlib
         if execute.get('how') == 'beakerlib':
-            self.cruncher.info('Execute: Running beakerlib tests')
+            # Prepare the environment
+            self.cruncher.info('Execute: Installing beakerlib and tests')
             self.guest.run('dnf -y install beakerlib')
+            self.guest.run('echo -e "#!/bin/bash\ntrue" > /usr/bin/rhts-environment.sh') # FIXME
+            path = os.path.join('/tmp', self.name)
+            # Fetch tests on the guest
+            self.guest.run('rm -rf {}; mkdir -p {}/logs; cd {}; git clone {} tests'.format(
+                path, path, path, self.testset.get(['discover', 'repository'])))
+            self.cruncher.info('Execute: Running beakerlib tests')
+            # Execute tests
+            for test in self.tests:
+                self.execute_beakerlib_test(test, path)
 
     def report(self):
         """ Report results """
+        if self.results:
+            log_dict(self.cruncher.info, "Test results", self.results)
 
     def finish(self):
         """ Finishing tasks """
