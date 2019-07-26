@@ -84,7 +84,7 @@ class Guest(object):
         return stdout, stderr
 
     def run_playbook(self, playbook):
-        self.info("Prepare: Running playbook '{}'".format(playbook))
+        self.info("[prepare] Running playbook '{}'".format(playbook))
 
         command = [
             'ansible-playbook',
@@ -96,12 +96,9 @@ class Guest(object):
             playbook
         ]
 
-        self.info(' '.join(command))
-
+        self.debug(' '.join(command))
         process = subprocess.Popen(command, stderr=subprocess.STDOUT)
-
         stdout, stderr = process.communicate()
-
         if process.returncode != 0:
             raise gluetool.GlueError("Playbook '{}' failed with return code '{}'".format(command, process.returncode))
 
@@ -116,9 +113,9 @@ class TestSet(object):
     def __init__(self, testset, cruncher):
         """ Initialize testset steps """
         if testset.get('summary'):
-            cruncher.info("Testset: {} ({})".format(testset.get('summary'), testset.name))
+            cruncher.info("[testset] {} ({})".format(testset.name, testset.get('summary')))
         else:
-            cruncher.info("Testset: {}".format(testset.name))
+            cruncher.info("[testset] {}".format(testset.name))
 
         # Initialize values
         self.cruncher = cruncher
@@ -162,7 +159,7 @@ class TestSet(object):
                     workdir = tempfile.mkdtemp(prefix=prefix, dir='.')
                 except OSError as error:
                     raise gluetool.GlueError('Could not create working directory: {}'.format(error))
-                self.cruncher.info('Working directory created: {}'.format(workdir))
+                self.cruncher.info('[prepare] Working directory created: {}'.format(workdir))
             TestSet._shared_workdir = workdir
 
         # Create testset-specific subdirectory
@@ -184,7 +181,7 @@ class TestSet(object):
             repository = discover.get('repository')
             if not repository:
                 raise gluetool.GlueError("No repository defined in the discover step")
-            self.cruncher.info("Discover: Checking repository '{}'".format(repository))
+            self.cruncher.info("[discover] Checking repository '{}'".format(repository))
             try:
                 command = ['git', 'clone', repository, 'tests']
                 output = Command(command).run(cwd=self.workdir)
@@ -195,14 +192,14 @@ class TestSet(object):
             tree = fmf.Tree(os.path.join(self.workdir, 'tests'))
             filters = discover.get('filter')
             self.tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
-            log_dict(self.cruncher.info, "Discovered tests", [test.name for test in self.tests])
+            log_dict(self.cruncher.info, "[discover] Discovered tests", [test.name for test in self.tests])
 
     def provision(self):
         """ Provision the guest """
 
         # Use an already running instance if provided
         if self.cruncher.option('ssh-host'):
-            self.cruncher.info("Provision: Using provided running instance '{}'".format(
+            self.cruncher.info("[provision] Using provided running instance '{}'".format(
                 self.cruncher.option('ssh-host')))
             self.guest = Guest(
                 self.cruncher,
@@ -212,7 +209,7 @@ class TestSet(object):
             return
 
         # Create a new instance using the provision script
-        self.cruncher.info("Provision: Booting image '{}'".format(self.cruncher.image))
+        self.cruncher.info("[provision] Booting image '{}'".format(self.cruncher.image))
         command = ['python3', self.cruncher.option('provision-script'), self.cruncher.image]
         environment = os.environ.copy()
         environment.update({'TEST_DEBUG': '1'})
@@ -248,7 +245,7 @@ class TestSet(object):
     def prepare(self):
         """ Prepare the guest for testing """
         # Install copr build
-        self.cruncher.info('Prepare: Installing builds from copr')
+        self.cruncher.info('[prepare] Installing builds from copr')
         self.install_copr_build()
 
         # Handle the prepare step
@@ -256,14 +253,20 @@ class TestSet(object):
         if not prepare:
             return
         if prepare.get('how') == 'ansible':
-            self.cruncher.info('Prepare: Applying ansible playbooks')
+            self.cruncher.info('[prepare] Applying ansible playbooks')
             self.guest.run('dnf -y install python')
             for playbook in prepare.get('playbooks'):
                 self.guest.run_playbook(os.path.join(self.cruncher.fmf_root, playbook))
 
+        # Prepare for beakerlib testing
+        if self.testset.get(['execute', 'how']) == 'beakerlib':
+            self.cruncher.info('[prepare] Installing beakerlib and tests')
+            self.guest.run('dnf -y install beakerlib')
+            self.guest.run('echo -e "#!/bin/bash\ntrue" > /usr/bin/rhts-environment.sh') # FIXME
+
     def execute_beakerlib_test(self, test, path):
         """ Execute a beakerlib test """
-        self.cruncher.info('Execute: Running test {}'.format(test.name))
+        self.cruncher.info('[execute] Running test {}'.format(test.name))
         test_dir = os.path.join(path, 'tests', (test.get('path') or test.name.lstrip('/')))
         logs_dir = os.path.join(path, 'logs', test.name.lstrip('/').replace('/', '-'))
         stdout, stderr = self.guest.run('cd {}; mkdir -p {}; BEAKERLIB_DIR={} {}'.format(
@@ -282,20 +285,16 @@ class TestSet(object):
         execute = self.testset.get('execute')
         # Shell
         if execute.get('how') == 'shell':
-            self.cruncher.info('Execute: Running shell commands')
+            self.cruncher.info('[execute] Running shell commands')
             for command in execute['commands']:
                 self.guest.run(command)
         # Beakerlib
         if execute.get('how') == 'beakerlib':
-            # Prepare the environment
-            self.cruncher.info('Execute: Installing beakerlib and tests')
-            self.guest.run('dnf -y install beakerlib')
-            self.guest.run('echo -e "#!/bin/bash\ntrue" > /usr/bin/rhts-environment.sh') # FIXME
-            path = os.path.join('/tmp', self.name)
             # Fetch tests on the guest
+            path = os.path.join('/tmp', self.name)
             self.guest.run('rm -rf {}; mkdir -p {}/logs; cd {}; git clone {} tests'.format(
                 path, path, path, self.testset.get(['discover', 'repository'])))
-            self.cruncher.info('Execute: Running beakerlib tests')
+            self.cruncher.info('[execute] Running beakerlib tests')
             # Execute tests
             for test in self.tests:
                 self.execute_beakerlib_test(test, path)
@@ -303,20 +302,20 @@ class TestSet(object):
     def report(self):
         """ Report results """
         if self.results:
-            log_dict(self.cruncher.info, "Test results", self.results)
+            log_dict(self.cruncher.info, "[report] Test results", self.results)
 
     def finish(self):
         """ Finishing tasks """
         # Keep the vm running
         if self.cruncher.option('keep-instance') or self.cruncher.option('ssh-host'):
-            self.cruncher.info("Finish: Guest kept running, use "
+            self.cruncher.info("[finish] Guest kept running, use "
                 "'--ssh-host={} --ssh-key={} --ssh-port={}' to connect back with cruncher".format(
                 self.guest.host, self.guest.key, self.guest.port))
-            self.cruncher.info("Finish: Use 'ssh -i {} -p {} root@{}' to connect to the VM".format(
+            self.cruncher.info("[finish] Use 'ssh -i {} -p {} root@{}' to connect to the VM".format(
                 self.guest.key, self.guest.port, self.guest.host))
         # Destroy the vm
         else:
-            self.cruncher.info('Finish: Destroying VM instance')
+            self.cruncher.info('[finish] Destroying VM instance')
             try:
                 Command(['pkill', '-9', 'qemu']).run()
             except gluetool.GlueCommandError:
