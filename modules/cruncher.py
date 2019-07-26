@@ -10,6 +10,7 @@ import tempfile
 from exceptions import OSError
 
 import gluetool
+from gluetool.log import LoggerMixin
 
 # pylint: disable=line-too-long
 from gluetool.utils import cached_property, check_for_commands, from_json, requests, render_template, Command, SimplePatternMap
@@ -31,14 +32,12 @@ jinja2.defaults.DEFAULT_FILTERS['get_url_content'] = get_url_content
 REQUIRED_CMDS = ['copr', 'curl', 'ansible-playbook', 'git']
 
 
-class Guest(object):
+class Guest(LoggerMixin, object):
     def __init__(self, module, host, key, port, user='root'):
         self.module = module
         self.key = key
         self.port = port
         self.host = host
-
-        module.logger.connect(self)
 
         self.user_host = '{}@{}'.format(user, host)
 
