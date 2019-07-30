@@ -9,9 +9,6 @@
         "id": "43e310b6-c1f1-4d3e-a95c-6c1eca235296"
     },
     "artifact": {
-        "type": "fedora-copr-build",
-        # build id and the chroot together form a unique identification of the copr build
-        "id": "34333232:fedora-x86_64",
         # copr repository name
         "repo": "packit/packit-servvice-16",
         # copr repository chroot
@@ -22,7 +19,7 @@
         "type": "fmf",
         "git": {
             "url": "https://github.com/systemd-rhel/tests",
-            "branch": "master"
+            "ref": "master"
         }
     }
 }    
