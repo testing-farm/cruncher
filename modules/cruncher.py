@@ -267,7 +267,7 @@ class TestSet(object):
         # Prepare for beakerlib testing
         if self.testset.get(['execute', 'how']) == 'beakerlib':
             self.info('[prepare] Installing beakerlib and tests')
-            self.guest.run('dnf -y install beakerlib')
+            self.guest.run('dnf -y install beakerlib git')
             self.guest.run('echo -e "#!/bin/bash\ntrue" > /usr/bin/rhts-environment.sh') # FIXME
 
     def execute_beakerlib_test(self, test, path):
