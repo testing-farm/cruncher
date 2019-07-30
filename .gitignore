@@ -12,9 +12,12 @@ libatt.egg-info
 .eggs
 .cache
 .tox
+.vscode
 
 images
 artifacts
 
 # Ansible "retry" files
 *.retry
+
+scheduler/config

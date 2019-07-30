@@ -1,0 +1,7 @@
+---
+/test/sanity/something:
+  execute:
+    how: shell
+    commands:
+      - dnf -y install nothing
+      - echo 'test'

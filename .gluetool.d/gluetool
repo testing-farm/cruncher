@@ -1,4 +1,4 @@
 [default]
 colors = yes
-module-config-path = configuration
+module-config-path = configuration/localhost
 module-path = modules
