@@ -309,7 +309,7 @@ class TestSet(object):
             # Fetch tests on the guest
             path = os.path.join('/tmp', self.name)
             self.guest.run('rm -rf {}; mkdir -p {}/logs; cd {}; git clone {} tests'.format(
-                path, path, path, self.testset.get(['discover', 'repository'])))
+                path, path, path, str(self.testset.get(['discover', 'repository']))))
             self.info('[execute] Running beakerlib tests')
             # Execute tests
             for test in self.tests:

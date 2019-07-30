@@ -50,3 +50,6 @@ The container runs qemu-kvm, thus needs privileged containers.
 
     docker run --privileged -v $(pwd)/images:/opt/cruncher/images:Z -v $(pwd)/fmf:/opt/cruncher/fmf:Z cruncher:latest cruncher --copr-chroot fedora-29-x86_64 --copr-name packit/packit-service-hello-world-8 --fmf-root /opt/cruncher/fmf/simple
 
+Running from our Quay.io repository
+
+   docker run --privileged -v $(pwd)/images:/opt/cruncher/images:Z -v $(pwd)/fmf:/opt/cruncher/fmf:Z quay.io/testing-farm/cruncher cruncher --copr-chroot fedora-29-x86_64 --copr-name packit/packit-service-hello-world-8 --fmf-root /opt/cruncher/fmf/systemd
