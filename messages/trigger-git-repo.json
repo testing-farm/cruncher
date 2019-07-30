@@ -16,7 +16,8 @@
         # copr repository chroot
         "chroot": "fedora-x86_64"
     },
-    # test example 2 - git url to tests, systemd needs this
+    # git repo with ref where L2 metadata can be found in the root directory
+    # this repository will be the root of the tests execution
     "test": {
         "type": "fmf",
         "git": {
