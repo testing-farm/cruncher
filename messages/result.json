@@ -20,6 +20,7 @@
   #   passed = all tests passed
   #   failed = all tests failed
   "result": "failed",
+  "message": "Error or info message to display",
   # tests can be an empty array if result is "error"
   "tests": [
     {
