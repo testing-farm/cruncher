@@ -9,8 +9,6 @@
     "image": "Fedora-Cloud-Base-29-1.2.x86_64.qcow2"
   },
   "artifact": {
-    "type": "fedora-copr-build",
-    "id": "34333232:fedora-x86_64",
     "repo": "packit/packit-servvice-16",
     "chroot": "fedora-x86_64"
   },
