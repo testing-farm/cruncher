@@ -12,7 +12,8 @@ from exceptions import OSError
 import gluetool
 
 # pylint: disable=line-too-long
-from gluetool.utils import cached_property, check_for_commands, from_json, log_blob, log_dict, requests, render_template, Command, SimplePatternMap
+from gluetool.utils import cached_property, check_for_commands, from_json, requests, render_template, Command, SimplePatternMap
+from gluetool.log import log_blob, log_dict
 
 
 def get_url_content(url):
@@ -284,6 +285,7 @@ class TestSet(object):
             result = "fail"
         else:
             result = "error"
+
         self.results[test.name] = result
 
     def execute(self):
@@ -302,7 +304,12 @@ class TestSet(object):
                 self.error(error)
                 result = "fail"
 
-            self.results[self.testset.name] = result
+            self.results.extend({
+                'name': self.testset.name,
+                'result': result,
+                # we need to find out how to save the logs
+                'log': 'FIXME'
+            })
 
         # Beakerlib
         if execute.get('how') == 'beakerlib':
@@ -342,9 +349,23 @@ class Cruncher(gluetool.Module):
     description = 'Cruncher for FMF flock prototype'
 
     options = [
+        ('Service related options', {
+            'artifact-dir': {
+                'help': 'Directory where to save artifacts from testing on localhost. Requires ``pipeline-id`` options.',
+            },
+            'artifact-root-url': {
+                'help': 'Root of the URL to the artifacts',
+            },
+            'pipeline-id': {
+                'help': 'A globally unique ID which identifies the test.',
+            },
+            'post-results-url': {
+                'help': 'Post test results to given URL.'
+            }
+        }),
         ('Copr artifact options', {
             'copr-chroot': {
-                'help': 'Chroot identification'
+                'help': 'Copr chroot name'
             },
             'copr-name': {
                 'help': 'Copr repository name'
@@ -370,15 +391,35 @@ class Cruncher(gluetool.Module):
                 'action': 'store_true'
             }
         }),
-        ('Test options', {
+        ('Test options - localhost', {
             'fmf-root': {
-                'help': 'Path to the fmf root tree'
+                'help': 'Path to the fmf root tree on localhost. Useful for running localhost tests.'
+            },
+        }),
+        ('Test options - git', {
+            'git-url': {
+                'help': 'URL to git repository with FMF L2 metadata.'
+            },
+            'git-ref': {
+                'help': 'Git reference to checkout'
+            },
+            'git-fmf-root': {
+                'help': 'Directory where the FMF root is located.'
             }
         }),
         ('Provision options', {
             'provision-script': {
                 'help': 'Provision script to use'
             },
+        }),
+        ('Reporting options', {
+            'post-results': {
+                'help': 'Post results to URL defined in ``post-results-url``',
+                'action': 'store_true2'
+            },
+           'post-results-url': {
+                'help': 'URL for posting results.'
+           }
         }),
         ('Debugging options', {
             'ssh-key': {
@@ -420,6 +461,12 @@ class Cruncher(gluetool.Module):
 
         self.image = self.option('image-file')
 
+        # copr-chroot and copr-name are required
+        if (self.option('copr-chroot') and not self.option('copr-name')) or \
+                (self.option('copr-name') and not self.option('copr-chroot')):
+            raise gluetool.utils.IncompatibleOptionsError(
+               'Insufficient information about copr build supplied, both chroot and repository name need to be specified.')
+
         # Use image from path
         if self.image:
             self.info("Using image from file '{}'".format(self.image))
@@ -433,6 +480,7 @@ class Cruncher(gluetool.Module):
             image_url = render_template(SimplePatternMap(
                 self.option('image-copr-chroot-map'), logger=self.logger).match(self.option('copr-chroot')))
 
+        # resolve image from URL
         if image_url:
             self.image = self.image_from_url(image_url)
             return
@@ -485,6 +533,9 @@ class Cruncher(gluetool.Module):
             return
         tree = fmf.Tree(self.fmf_root)
 
+        # FIXME: blow up if no tests to run
+        # FIXME: other checks for fmf validity?
+
         # Process each testset found in the fmf tree
         for testset in tree.climb():
             testset = TestSet(testset, cruncher=self)
@@ -493,8 +544,57 @@ class Cruncher(gluetool.Module):
         if self.results:
             log_dict(self.info, "Test results", self.results)
 
+    def post_results(self, failure):
+        # if there was a failure or no results, we report error
+        if failure:
+            status = "error"
+            message = str(failure)
+
+        elif not self.results:
+            status = "error"
+            message = "No tests were defined in FMF metadata."
+
+        else:
+            status = 'pass'
+
+            if any([result.result == 'fail' for result in self.results]):
+                status == 'fail'
+
+        message = {}
+
+        pipeline_id = self.option('pipeline-id')
+
+        if pipeline_id:
+            message.update({'pipeline': pipeline_id})
+
+        if self.option('copr-name'):
+            message.update({
+                'artifact': {
+                    'type': 'fedora-copr-build',
+                    'repo': self.option('copr-name'),
+                    'chroot': self.option('copr-chroot')
+                }
+            })
+
+        if self.image:
+            message.update({
+                'environment': {
+                    'image': os.path.basename(self.image)
+                }
+            })
+
+        if self.results:
+            message.update({
+                'tests': self.results,
+            })            
+
+        self.log_dict()
+
     def destroy(self, failure):
-        """ Cleanup tasks """
+        """ Cleanup and notification tasks """
+        # post results about testing
+        self.post_results(failure)
+
         # Remove workdir if requested
         if self.option('cleanup') and TestSet._workdir:
             self.info("Removing workdir '{}'".format(TestSet._workdir))
