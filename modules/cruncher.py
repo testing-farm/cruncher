@@ -202,7 +202,7 @@ class TestSet(LoggerMixin):
         # FMF
         if discover.get('how') == 'fmf':
             # Clone the git repository
-            repository = discover.get('repository')
+            repository = str(discover.get('repository'))
             if not repository:
                 raise gluetool.GlueError("No repository defined in the discover step")
             self.info("[discover] Checking repository '{}'".format(repository))
@@ -236,12 +236,13 @@ class TestSet(LoggerMixin):
         self.info("[provision] Booting image '{}'".format(self.cruncher.image))
         command = ['python3', self.cruncher.option('provision-script'), self.cruncher.image]
         environment = os.environ.copy()
-        environment.update({'TEST_DEBUG': '1'})
+        # FIXME: not sure if so much handy ...
+        # environment.update({'TEST_DEBUG': '1'})
         try:
             output = Command(command).run(env=environment)
         except gluetool.GlueCommandError as error:
-            log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
-            raise gluetool.GlueError("Failed to boot image '{}'".format(self.cruncher.image))
+            # log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
+            raise gluetool.GlueError("Failed to boot test machine with image '{}', is /dev/kvm available?".format(self.cruncher.image))
 
         # Store provision details and create the guest
         details = from_json(output.stdout)
