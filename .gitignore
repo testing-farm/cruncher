@@ -20,4 +20,5 @@ artifacts
 # Ansible "retry" files
 *.retry
 
-scheduler/config
+# Default download directory for FMF metadata
+source

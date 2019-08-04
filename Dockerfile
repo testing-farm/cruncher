@@ -1,6 +1,6 @@
 FROM fedora:latest
 
-RUN dnf -y install python-pip curl ansible copr-cli git qemu-kvm fmf genisoimage
+RUN dnf -y install python-pip curl ansible copr-cli git qemu-kvm fmf genisoimage git
 
 RUN pip install gluetool fmf
 

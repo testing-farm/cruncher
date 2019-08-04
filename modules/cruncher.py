@@ -1,6 +1,7 @@
 import colorama
 import fmf
 import jinja2
+import json
 import os
 import re
 import shutil
@@ -10,7 +11,7 @@ import tempfile
 from exceptions import OSError
 
 import gluetool
-from gluetool.log import LoggerMixin
+from gluetool.log import ContextAdapter, LoggerMixin
 
 # pylint: disable=line-too-long
 from gluetool.utils import cached_property, check_for_commands, from_json, requests, render_template, Command, SimplePatternMap
@@ -34,10 +35,13 @@ REQUIRED_CMDS = ['copr', 'curl', 'ansible-playbook', 'git']
 
 class Guest(LoggerMixin, object):
     def __init__(self, module, host, key, port, user='root'):
+        super(Guest, self).__init__(module.logger)
+
         self.module = module
         self.key = key
         self.port = port
         self.host = host
+        self.home = None
 
         self.user_host = '{}@{}'.format(user, host)
 
@@ -51,7 +55,7 @@ class Guest(LoggerMixin, object):
         ]
 
         try:
-            output = Command(command).run()
+            Command(command).run()
 
         except gluetool.GlueCommandError as error:
 
@@ -59,7 +63,12 @@ class Guest(LoggerMixin, object):
 
             raise gluetool.GlueError("Failed to connect to guest '{}' via ssh".format(self.user_host))
 
+    def set_home(self, path):
+        self.home = path
+
     def run(self, command, pipe=False):
+        run_command = command
+
         ssh_command = [
             'ssh',
             '-o', 'StrictHostKeyChecking=no',
@@ -71,7 +80,10 @@ class Guest(LoggerMixin, object):
             command
         ]
 
-        print(colorama.Fore.CYAN + '# {}'.format(command))
+        if self.home:
+            command = 'cd {}; {}'.format(self.home, command)
+
+        print(colorama.Fore.CYAN + '# {}'.format(run_command))
 
         if pipe:
             process = subprocess.Popen(ssh_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -99,34 +111,40 @@ class Guest(LoggerMixin, object):
 
         self.debug(' '.join(command))
         process = subprocess.Popen(command, stderr=subprocess.STDOUT)
-        stdout, stderr = process.communicate()
+        process.communicate()
         if process.returncode != 0:
             raise gluetool.GlueError("Playbook '{}' failed with return code '{}'".format(command, process.returncode))
 
 
-class TestSet(object):
+class TestSetAdapter(ContextAdapter):
+    """
+    Displays testset name as a context.
+    """
+    def __init__(self, logger, testset, *args, **kwargs):
+        super(TestSetAdapter, self).__init__(logger, {'ctx_testset': (110, testset)})
+
+
+class TestSet(LoggerMixin):
     """ Testset object handling individual steps """
 
     # Working directories (shared and testset-specific)
     _shared_workdir = None
     _workdir = None
 
-    def __init__(self, testset, cruncher):
+    def __init__(self, module, testset, cruncher, *args, **kwargs):
         """ Initialize testset steps """
+        super(TestSet, self).__init__(TestSetAdapter(module.logger, testset.name), *args, **kwargs)
+
         if testset.get('summary'):
-            cruncher.info("[testset] {} ({})".format(testset.name, testset.get('summary')))
-        else:
-            cruncher.info("[testset] {}".format(testset.name))
+            cruncher.info("summary: {}".format(testset.get('summary')))
 
         # Initialize values
         self.cruncher = cruncher
         self.testset = testset
         self.tests = None
-        self.results = dict()
+        self.results = []
         self.guest = None
-
-        # Initializa logger
-        cruncher.logger.connect(self)
+        self.source = '~/source'
 
         # Dashed name of the testset without the /ci/test/ prefix
         self.name = self.testset.name.lstrip('/ci/test/').replace('/', '-')
@@ -190,7 +208,7 @@ class TestSet(object):
             self.info("[discover] Checking repository '{}'".format(repository))
             try:
                 command = ['git', 'clone', repository, 'tests']
-                output = Command(command).run(cwd=self.workdir)
+                Command(command).run(cwd=self.workdir)
             except gluetool.GlueCommandError as error:
                 log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
                 raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
@@ -240,19 +258,46 @@ class TestSet(object):
         """ Install packages from copr """
         # Nothing to do if copr-name not provided
         if not self.cruncher.option('copr-name'):
+            self.debug('No copr repository specified, skipping installation')
             return
+
+        self.info('[prepare] Installing builds from copr')
 
         # Enable copr repository and install all builds from there
         self.guest.run('dnf -y copr enable {}'.format(self.cruncher.option('copr-name')))
+
+        # Install all builds from copr repository
         self.guest.run(
-            'dnf -q repoquery --disablerepo=* --enablerepo={} | grep -v \.src |'
-            'xargs dnf -y install'.format(self.cruncher.option('copr-name').replace('/', '-')))
+            # pylint: disable=line-too-long
+            'dnf -q repoquery --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | tr "/" ":") | grep -v \\.src | xargs dnf -y install'
+        )
+
+    def download_git(self):
+        """ Download git repository to the machine """
+        # Nothing to do if git-url and git-ref not specified
+        url = self.cruncher.option('git-url')
+        ref = self.cruncher.option('git-ref')
+
+        if not url and not ref:
+            self.debug('No git repository for download specified, skipping download')
+            return
+
+        self.info("[prepare] Download git repository '{}' ref '{}' to '{}' on test machine".format(url, ref, self.source))
+
+        self.guest.run('rpm -q git >/dev/null || dnf -y install git')
+
+        self.guest.run('rm -rf {2} && git clone --depth 1 -b {0} {1} {2}'.format(ref, url, self.source))
+
+        self.info("[prepare] Using cloned repository as working directory on the test machine")
+        self.guest.set_home(self.source)
 
     def prepare(self):
         """ Prepare the guest for testing """
         # Install copr build
-        self.info('[prepare] Installing builds from copr')
         self.install_copr_build()
+
+        # Download git sources
+        self.download_git()
 
         # Handle the prepare step
         prepare = self.testset.get('prepare')
@@ -275,9 +320,9 @@ class TestSet(object):
         self.info('[execute] Running test {}'.format(test.name))
         test_dir = os.path.join(path, 'tests', (test.get('path') or test.name.lstrip('/')))
         logs_dir = os.path.join(path, 'logs', test.name.lstrip('/').replace('/', '-'))
-        stdout, stderr = self.guest.run('cd {}; mkdir -p {}; BEAKERLIB_DIR={} {}'.format(
+        self.guest.run('cd {}; mkdir -p {}; BEAKERLIB_DIR={} {}'.format(
             test_dir, logs_dir, logs_dir, test.get('test')))
-        journal, stderr = self.guest.run('cat {}'.format(os.path.join(logs_dir, 'journal.txt')), pipe=True)
+        journal, _ = self.guest.run('cat {}'.format(os.path.join(logs_dir, 'journal.txt')), pipe=True)
         if re.search("OVERALL RESULT: PASS", journal):
             result = "pass"
         elif re.search("OVERALL RESULT: FAIL", journal):
@@ -303,7 +348,7 @@ class TestSet(object):
                 self.error(error)
                 result = "fail"
 
-            self.results.extend({
+            self.results.append({
                 'name': self.testset.name,
                 'result': result,
                 # we need to find out how to save the logs
@@ -332,11 +377,11 @@ class TestSet(object):
             self.info("[finish] Guest kept running, use "
                 "'--ssh-host={} --ssh-key={} --ssh-port={}' to connect back with cruncher".format(
                 self.guest.host, self.guest.key, self.guest.port))
-            self.info("[finish] Use 'ssh -i {} -p {} root@{}' to connect to the VM".format(
+            self.info("[finish] Use 'ssh -i {} -p {} root@{}' to connect to the test machine".format(
                 self.guest.key, self.guest.port, self.guest.host))
         # Destroy the vm
         else:
-            self.info('[finish] Destroying VM instance')
+            self.info('[finish] Destroying test machine')
             try:
                 Command(['pkill', '-9', 'qemu']).run()
             except gluetool.GlueCommandError:
@@ -355,12 +400,6 @@ class Cruncher(gluetool.Module):
             'artifact-root-url': {
                 'help': 'Root of the URL to the artifacts',
             },
-            'pipeline-id': {
-                'help': 'A globally unique ID which identifies the test.',
-            },
-            'post-results-url': {
-                'help': 'Post test results to given URL.'
-            }
         }),
         ('Copr artifact options', {
             'copr-chroot': {
@@ -402,8 +441,14 @@ class Cruncher(gluetool.Module):
             'git-ref': {
                 'help': 'Git reference to checkout'
             },
-            'git-fmf-root': {
-                'help': 'Directory where the FMF root is located.'
+            'git-commit-sha': {
+                'help': 'Git commit SHA',
+            },
+            'git-repo-name': {
+                'help': 'Git repository name'
+            },
+            'git-repo-namespace': {
+                'help': 'Git repository namespace'
             }
         }),
         ('Provision options', {
@@ -412,12 +457,16 @@ class Cruncher(gluetool.Module):
             },
         }),
         ('Reporting options', {
+            'pipeline-id': {
+                'help': 'A globally unique ID which identifies the test.',
+            },
             'post-results': {
                 'help': 'Post results to URL defined in ``post-results-url``',
-                'action': 'store_true2'
+                'action': 'store_true'
             },
            'post-results-url': {
-                'help': 'URL for posting results.'
+                'help': 'URL(s) for posting results.',
+                'action': 'append'
            }
         }),
         ('Debugging options', {
@@ -439,7 +488,8 @@ class Cruncher(gluetool.Module):
                 'action': 'store_true'
             },
             'workdir': {
-                'help': 'Use given workdir and skip copr build download'
+                'help': 'Use given workdir instead of current directory',
+                'default': '.'
             }
         })
     ]
@@ -454,7 +504,7 @@ class Cruncher(gluetool.Module):
 
         colorama.init(autoreset=True)
 
-        self.results = dict()
+        self.results = []
 
     def sanity(self):
 
@@ -527,9 +577,22 @@ class Cruncher(gluetool.Module):
         """ Process all testsets defined """
         # Initialize the metadata tree
         self.fmf_root = self.option('fmf-root')
-        if not self.fmf_root:
-            self.info("Nothing to do, no fmf root provided")
-            return
+        git_url = self.option('git-url')
+        git_ref = self.option('git-ref')
+        workdir = self.option('workdir')
+
+        if self.fmf_root:
+            self.info("Getting FMF metadata from local path '{}' ".format(self.fmf_root))
+
+        elif git_url and git_ref:
+            self.info("Getting FMF metadata from git repository '{}' ref '{}' ".format(git_url, git_ref))
+            Command(['git', 'clone', '--depth=1', '-b', git_ref, git_url, 'source' ]).run(cwd=workdir)
+            self.fmf_root = os.path.join(workdir, 'source')
+
+        else:
+            self.info("Nothing to do, no FMF metadata provided")
+
+        # init FMF trees
         tree = fmf.Tree(self.fmf_root)
 
         # FIXME: blow up if no tests to run
@@ -537,29 +600,34 @@ class Cruncher(gluetool.Module):
 
         # Process each testset found in the fmf tree
         for testset in tree.climb():
-            testset = TestSet(testset, cruncher=self)
-            self.results.update(testset.go())
+            testset = TestSet(self, testset, cruncher=self)
+            self.results.extend(testset.go())
 
         if self.results:
             log_dict(self.info, "Test results", self.results)
 
     def post_results(self, failure):
-        # if there was a failure or no results, we report error
-        if failure:
-            status = "error"
-            message = str(failure)
-
-        elif not self.results:
-            status = "error"
-            message = "No tests were defined in FMF metadata."
-
-        else:
-            status = 'pass'
-
-            if any([result.result == 'fail' for result in self.results]):
-                status == 'fail'
+        if not self.option('post-results'):
+            return
 
         message = {}
+
+        # if there was a failure or no results, we report error
+        if failure:
+            result = "error"
+            message['message'] = str(failure.exc_info[1])
+
+        elif not self.results:
+            result = "error"
+            message['message'] = "No tests were defined in FMF metadata."
+
+        else:
+            result = 'pass'
+
+            if any([r['result'] == 'fail' for r in self.results]):
+                result = 'fail'
+
+        message['result'] = result
 
         pipeline_id = self.option('pipeline-id')
 
@@ -569,9 +637,13 @@ class Cruncher(gluetool.Module):
         if self.option('copr-name'):
             message.update({
                 'artifact': {
-                    'type': 'fedora-copr-build',
-                    'repo': self.option('copr-name'),
-                    'chroot': self.option('copr-chroot')
+                    'repo-name': self.option('git-repo-name'),
+                    'repo-namespace': self.option('git-repo-namespace'),
+                    'copr-repo-name': self.option('copr-name'),
+                    'copr-chroot': self.option('copr-chroot'),
+                    'commit-sha': self.option('git-commit-sha'),
+                    'git-url': self.option('git-url'),
+                    'git-ref': self.option('git-ref')
                 }
             })
 
@@ -587,7 +659,16 @@ class Cruncher(gluetool.Module):
                 'tests': self.results,
             })            
 
-        self.log_dict()
+        log_dict(self.info, 'result message', message)
+
+        log_dict(self.info, 'posting result message to URLs', self.option('post-results-url'))
+
+        for url in self.option('post-results-url'):
+            with requests(logger=self.logger) as req:
+                response = req.post(url, json=message)
+
+            if response.status_code != 200:
+                raise gluetool.GlueError('Could not post results to "{}"'.format(url))
 
     def destroy(self, failure):
         """ Cleanup and notification tasks """

@@ -2,7 +2,7 @@
     "pipeline": {
         # this is a unique indetifier of the test, it should be generated with "uuidgen"
         # the result will use the same ID which the requester can use to pair the request with the result
-        "id": "43e310b6-c1f1-4d3e-a95c-6c1eca235296"
+        "id": "43e310b6-c1f1-4d3e-a95c-6c1eca235296",
         # secret token shared with the trigger client
         "token": "my-secret-token"
     },
