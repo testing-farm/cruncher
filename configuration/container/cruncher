@@ -2,3 +2,4 @@
 image-copr-chroot-map = /opt/cruncher/configuration/chroot-image-map.yaml
 provision-script = /opt/cruncher/tools/standard-inventory-qcow2
 image-cache-dir = /opt/cruncher/images
+post-results-url = https://scheduler-testing-farm.apps.ci.centos.org/v0/result
