@@ -286,8 +286,8 @@ class TestSet(LoggerMixin):
         self.info("[prepare] Download git repository '{}' ref '{}' to '{}' on test machine".format(url, ref, self.source))
 
         self.guest.run('rpm -q git >/dev/null || dnf -y install git')
-
-        self.guest.run('rm -rf {2} && git clone --depth 1 -b {0} {1} {2}'.format(ref, url, self.source))
+        self.guest.run('rm -rf {1} && git clone --depth 1 {0} {1}'.format(url, self.source))
+        self.guest.run('cd {0} && git fetch origin {1}:{1} && git checkout ref'.format(self.source, ref))
 
         self.info("[prepare] Using cloned repository as working directory on the test machine")
         self.guest.set_home(self.source)
@@ -401,6 +401,9 @@ class Cruncher(gluetool.Module):
             'artifact-root-url': {
                 'help': 'Root of the URL to the artifacts',
             },
+            'ui-url': {
+                'help': 'URL to the user interface.'
+            }
         }),
         ('Copr artifact options', {
             'copr-chroot': {
@@ -587,14 +590,20 @@ class Cruncher(gluetool.Module):
 
         elif git_url and git_ref:
             self.info("Getting FMF metadata from git repository '{}' ref '{}' ".format(git_url, git_ref))
-            Command(['git', 'clone', '--depth=1', '-b', git_ref, git_url, 'source' ]).run(cwd=workdir)
+            Command(['rm', '-rf', 'source']).run(cwd=workdir)
+            Command(['git', 'clone', '--depth=1', git_url, 'source' ]).run(cwd=workdir)
+            Command(['git', 'fetch', 'origin', '{0}:{0}'.format(git_ref)]).run(cwd=os.path.join(workdir, 'source'))
+            Command(['git', 'checkout', git_ref]).run(cwd=os.path.join(workdir, 'source'))
             self.fmf_root = os.path.join(workdir, 'source')
 
         else:
             self.info("Nothing to do, no FMF metadata provided")
 
         # init FMF trees
-        tree = fmf.Tree(self.fmf_root)
+        try:
+            tree = fmf.Tree(self.fmf_root)
+        except fmf.utils.RootError:
+            raise gluetool.GlueError('No FMF metadata found.')
 
         # FIXME: blow up if no tests to run
         # FIXME: other checks for fmf validity?
@@ -659,6 +668,10 @@ class Cruncher(gluetool.Module):
             message.update({
                 'tests': self.results,
             })            
+
+        message.update({
+            'url': '{}/pipeline/{}'.format(self.option('ui-url'), pipeline_id),
+        })
 
         log_dict(self.info, 'result message', message)
 
