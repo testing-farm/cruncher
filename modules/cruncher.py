@@ -652,7 +652,11 @@ class Cruncher(gluetool.Module):
         pipeline_id = self.option('pipeline-id')
 
         if pipeline_id:
-            message.update({'pipeline': pipeline_id})
+            message.update({
+                'pipeline': {
+                    'id': pipeline_id
+                }
+            })
 
         if self.option('copr-name'):
             message.update({
