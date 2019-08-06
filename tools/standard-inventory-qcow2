@@ -110,7 +110,7 @@ class AdditionalDrives(object):
             cls._tempfiles.append({'file': drive_file, 'path': path})
             logger.info("Created temporary sparse file '%s'." % drive_file.name)
             # translate data into qemu command options
-            result += ["-drive", "file=%s,media=disk,if=virtio" % drive_file.name]
+            result += ["-drive", "file=%s,media=disk,if=virtio,cache=none" % drive_file.name]
         atexit.register(cls.cleanup)
         return result
 

@@ -633,9 +633,19 @@ class Cruncher(gluetool.Module):
 
         else:
             result = 'pass'
+            failed = sum([r['result'] == 'fail' for r in self.results])
 
-            if any([r['result'] == 'fail' for r in self.results]):
+            if failed > 0:
                 result = 'fail'
+                result_count = len(self.results)
+                message['message'] = '{} {} from {} failed'.format(
+                    failed,
+                    'test' if result_count == 1 else 'tests',
+                    result_count
+                )
+
+            else:
+                message['message'] = 'All tests passed'
 
         message['result'] = result
 
@@ -675,9 +685,11 @@ class Cruncher(gluetool.Module):
 
         log_dict(self.info, 'result message', message)
 
-        log_dict(self.info, 'posting result message to URLs', self.option('post-results-url'))
+        post_results_urls = gluetool.utils.normalize_multistring_option(self.option('post-results-url'))
 
-        for url in self.option('post-results-url'):
+        log_dict(self.info, 'posting result message to URLs', post_results_urls)
+
+        for url in post_results_urls:
             with requests(logger=self.logger) as req:
                 response = req.post(url, json=message)
 
