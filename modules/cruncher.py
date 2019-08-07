@@ -34,14 +34,15 @@ REQUIRED_CMDS = ['copr', 'curl', 'ansible-playbook', 'git']
 
 
 class Guest(LoggerMixin, object):
-    def __init__(self, module, host, key, port, user='root'):
-        super(Guest, self).__init__(module.logger)
+    def __init__(self, module, host, key, port, workdir, user='root', logger=None):
+        super(Guest, self).__init__(logger or module.logger)
 
         self.module = module
         self.key = key
         self.port = port
         self.host = host
         self.home = None
+        self.workdir = workdir
 
         self.user_host = '{}@{}'.format(user, host)
 
@@ -55,7 +56,7 @@ class Guest(LoggerMixin, object):
         ]
 
         try:
-            Command(command).run()
+            Command(command).run(cwd=self.workdir)
 
         except gluetool.GlueCommandError as error:
 
@@ -66,7 +67,36 @@ class Guest(LoggerMixin, object):
     def set_home(self, path):
         self.home = path
 
-    def run(self, command, pipe=False):
+    def archive(self, from_remote_dir, to_dir, log):
+        command = [
+            'scp',
+            '-r',
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'LogLevel=ERROR',
+            '-i', self.key,
+            '-P', self.port,
+            self.user_host,
+            from_remote_dir,
+            to_dir
+        ]
+
+        with open(os.path.join(self.workdir, log), mode="a+") as log:
+
+            log.write('# {}\n'.format(command))
+
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+            while process.poll() is None:
+                line = process.stdout.readline()
+                log.write(line)
+                log.flush()
+
+        if process.returncode != 0:
+            raise gluetool.GlueError("Failed to archive artifacts, scp returned code '{}', see '{}' for details".format(process.returncode, log))
+
+
+    def run(self, command, pipe=False, log=None):
         run_command = command
 
         ssh_command = [
@@ -83,20 +113,35 @@ class Guest(LoggerMixin, object):
         if self.home:
             command = 'cd {}; {}'.format(self.home, command)
 
+        if log:
+            log = open(os.path.join(self.workdir, log), mode="a+")
+
         print(colorama.Fore.CYAN + '# {}'.format(run_command))
 
-        if pipe:
-            process = subprocess.Popen(ssh_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        else:
-            process = subprocess.Popen(ssh_command, stderr=subprocess.STDOUT)
-        stdout, stderr = process.communicate()
+        if log:
+            log.write('# {}\n'.format(run_command))
+
+        stdout = str()
+
+        process = subprocess.Popen(ssh_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+        while process.poll() is None:
+            line = process.stdout.readline()
+            if log:
+                log.write(line)
+                log.flush()
+            sys.stdout.write(line)
+            stdout += line
+
+        if log:
+            log.close()
 
         if process.returncode != 0:
             raise gluetool.GlueError("Command '{}' failed with return code '{}'".format(command, process.returncode))
 
-        return stdout, stderr
+        return stdout
 
-    def run_playbook(self, playbook):
+    def run_playbook(self, playbook, log=None):
         self.info("[prepare] Running playbook '{}'".format(playbook))
 
         command = [
@@ -109,9 +154,27 @@ class Guest(LoggerMixin, object):
             playbook
         ]
 
-        self.debug(' '.join(command))
-        process = subprocess.Popen(command, stderr=subprocess.STDOUT)
-        process.communicate()
+        if log:
+            log = open(os.path.join(self.workdir, log), mode="a+")
+            log.write('# ansible-playbook -i test_machine {}\n'.format(playbook))
+
+        print(colorama.Fore.CYAN + '# ansible-playbook -i test_machine {}'.format(playbook))
+
+        stdout = str()
+
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+        while process.poll() is None:
+            line = process.stdout.readline()
+            if log:
+                log.write(line)
+                log.flush()
+            sys.stdout.write(line)
+            stdout += line
+
+        if log:
+            log.close()
+
         if process.returncode != 0:
             raise gluetool.GlueError("Playbook '{}' failed with return code '{}'".format(command, process.returncode))
 
@@ -136,7 +199,7 @@ class TestSet(LoggerMixin):
         super(TestSet, self).__init__(TestSetAdapter(module.logger, testset.name), *args, **kwargs)
 
         if testset.get('summary'):
-            cruncher.info("summary: {}".format(testset.get('summary')))
+            self.info("Summary '{}'".format(testset.get('summary')))
 
         # Initialize values
         self.cruncher = cruncher
@@ -144,10 +207,16 @@ class TestSet(LoggerMixin):
         self.tests = None
         self.results = []
         self.guest = None
-        self.source = '~/source'
+        self.source = '~/git-source'
+        self.remote_workdir = '~/workdir'
 
-        # Dashed name of the testset without the /ci/test/ prefix
-        self.name = self.testset.name.lstrip('/ci/test/').replace('/', '-')
+        # Dashed name of the testset, ignore first dash ...
+        self.name = self.testset.name.replace('/', '-')[1:]
+
+        # Workdir for the test set, based on main workdir
+        self.workdir = os.path.join(self.cruncher.option('artifacts-dir'), self.name)
+        os.makedirs(self.workdir)
+        self.info("Testset working directory '{}'".format(self.workdir))
 
         # Execute step should be defined
         if not self.testset.get('execute'):
@@ -164,36 +233,6 @@ class TestSet(LoggerMixin):
 
         return results
 
-    @property
-    def workdir(self):
-        """ Testset working directory under the shared workdir """
-
-        # Nothing to do if directory already created
-        if self._workdir is not None:
-            return self._workdir
-
-        # Use provided shared workdir or create one in the current directory
-        if TestSet._shared_workdir is None:
-            workdir = self.cruncher.option('workdir')
-            if workdir:
-                self.info('Using working directory: {}'.format(workdir))
-            else:
-                prefix = 'workdir-{}-'.format(self.cruncher.option('copr-chroot'))
-                try:
-                    workdir = tempfile.mkdtemp(prefix=prefix, dir='.')
-                except OSError as error:
-                    raise gluetool.GlueError('Could not create working directory: {}'.format(error))
-                self.info('[prepare] Working directory created: {}'.format(workdir))
-            TestSet._shared_workdir = workdir
-
-        # Create testset-specific subdirectory
-        self._workdir = os.path.join(TestSet._shared_workdir, self.name)
-        try:
-            os.mkdir(self._workdir)
-        except OSError, error:
-            raise gluetool.GlueError('Could not create working directory: {}'.format(error))
-        return self._workdir
-
     def discover(self):
         """ Discover tests for execution """
         discover = self.testset.get('discover')
@@ -203,19 +242,29 @@ class TestSet(LoggerMixin):
         if discover.get('how') == 'fmf':
             # Clone the git repository
             repository = str(discover.get('repository'))
+
             if not repository:
                 raise gluetool.GlueError("No repository defined in the discover step")
+
             self.info("[discover] Checking repository '{}'".format(repository))
+
             try:
-                command = ['git', 'clone', repository, 'tests']
+                command = ['git', 'clone', repository, 'beakerlib-tests']
                 Command(command).run(cwd=self.workdir)
+
             except gluetool.GlueCommandError as error:
                 log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
                 raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
+
             # Pick tests based on the fmf filter
-            tree = fmf.Tree(os.path.join(self.workdir, 'tests'))
+            tree = fmf.Tree(os.path.join(self.workdir, 'beakerlib-tests'))
             filters = discover.get('filter')
             self.tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
+
+            # Remove the tests, as they were only for discovering tests to run ...
+            # They will be available in workdir from the test machine
+            Command(['rm', '-rf', 'beakerlib-tests']).run(cwd=self.workdir)
+
             log_dict(self.info, "[discover] Discovered tests", [test.name for test in self.tests])
 
     def provision(self):
@@ -229,20 +278,23 @@ class TestSet(LoggerMixin):
                 self.cruncher,
                 self.cruncher.option('ssh-host'),
                 self.cruncher.option('ssh-key'),
-                self.cruncher.option('ssh-port'))
+                self.cruncher.option('ssh-port'),
+                self.workdir,
+                logger=self.logger)
             return
 
         # Create a new instance using the provision script
         self.info("[provision] Booting image '{}'".format(self.cruncher.image))
-        command = ['python3', self.cruncher.option('provision-script'), self.cruncher.image]
+        command = ['python3', gluetool.utils.normalize_path(self.cruncher.option('provision-script')), self.cruncher.image]
         environment = os.environ.copy()
         # FIXME: not sure if so much handy ...
         # environment.update({'TEST_DEBUG': '1'})
         try:
-            output = Command(command).run(env=environment)
-        except gluetool.GlueCommandError as error:
+            output = Command(command).run(env=environment, cwd=self.workdir)
+        except gluetool.GlueCommandError:
             # log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
-            raise gluetool.GlueError("Failed to boot test machine with image '{}', is /dev/kvm available?".format(self.cruncher.image))
+            # pylint: disable=line-too-long
+            raise gluetool.GlueError("Failed to boot test machine with image '{}', is /dev/kvm available? See 'provision' logs for more details.".format(self.cruncher.image))
 
         # Store provision details and create the guest
         details = from_json(output.stdout)
@@ -252,8 +304,10 @@ class TestSet(LoggerMixin):
         self.guest = Guest(
             self.cruncher,
             host_details['ansible_host'],
-            key=host_details['ansible_ssh_private_key_file'],
-            port=host_details['ansible_port'])
+            host_details['ansible_ssh_private_key_file'],
+            host_details['ansible_port'],
+            self.workdir,
+            logger=self.logger)
 
     def install_copr_build(self):
         """ Install packages from copr """
@@ -305,25 +359,29 @@ class TestSet(LoggerMixin):
         if not prepare:
             return
         if prepare.get('how') == 'ansible':
-            self.info('[prepare] Applying ansible playbooks')
-            self.guest.run('dnf -y install python')
+            self.info("[prepare] Installing Ansible requirements on test machine")
+            self.guest.run('dnf -y install python', log='prepare.log')
             for playbook in prepare.get('playbooks'):
-                self.guest.run_playbook(os.path.join(self.cruncher.fmf_root, playbook))
+                self.info("[prepare] Applying Ansible playbook '{}'".format(playbook))
+                self.guest.run_playbook(os.path.join(self.cruncher.fmf_root, playbook), log='prepare.log')
 
         # Prepare for beakerlib testing
         if self.testset.get(['execute', 'how']) == 'beakerlib':
             self.info('[prepare] Installing beakerlib and tests')
-            self.guest.run('dnf -y install beakerlib git')
-            self.guest.run('echo -e "#!/bin/bash\ntrue" > /usr/bin/rhts-environment.sh') # FIXME
+            self.guest.run('dnf -y install beakerlib git', log='prepare.log')
+            self.guest.run(
+                'echo -e "#!/bin/bash\ntrue" > /usr/bin/rhts-environment.sh',
+                log='prepare.log'
+            ) # FIXME
 
-    def execute_beakerlib_test(self, test, path):
+    def execute_beakerlib_test(self, test):
         """ Execute a beakerlib test """
-        self.info('[execute] Running test {}'.format(test.name))
-        test_dir = os.path.join(path, 'tests', (test.get('path') or test.name.lstrip('/')))
-        logs_dir = os.path.join(path, 'logs', test.name.lstrip('/').replace('/', '-'))
-        self.guest.run('cd {}; mkdir -p {}; BEAKERLIB_DIR={} {}'.format(
-            test_dir, logs_dir, logs_dir, test.get('test')))
-        journal, _ = self.guest.run('cat {}'.format(os.path.join(logs_dir, 'journal.txt')), pipe=True)
+        self.info("[execute] Running test '{}'".format(test.name))
+        test_dir = os.path.join(self.remote_workdir, 'tests', (test.get('path') or test.name.lstrip('/')))
+        logs_dir = os.path.join(self.remote_workdir, 'logs', test.name.lstrip('/').replace('/', '-'))
+        self.guest.run('cd {0}; mkdir -p {1}; BEAKERLIB_DIR={1} {2}'.format(
+            test_dir, logs_dir, test.get('test')), log='execute.log')
+        journal = self.guest.run('cat {}'.format(os.path.join(logs_dir, 'journal.txt')))
         if re.search("OVERALL RESULT: PASS", journal):
             result = "pass"
         elif re.search("OVERALL RESULT: FAIL", journal):
@@ -342,7 +400,7 @@ class TestSet(LoggerMixin):
 
             try:
                 for command in execute['commands']:
-                    self.guest.run(command)
+                    self.guest.run(command, log='execute.log')
                 result = "pass"
 
             except gluetool.GlueError as error:
@@ -358,14 +416,17 @@ class TestSet(LoggerMixin):
 
         # Beakerlib
         if execute.get('how') == 'beakerlib':
-            # Fetch tests on the guest
-            path = os.path.join('/tmp', self.name)
-            self.guest.run('rm -rf {}; mkdir -p {}/logs; cd {}; git clone {} tests'.format(
-                path, path, path, str(self.testset.get(['discover', 'repository']))))
+            self.guest.run(
+                'rm -rf {0}; cd {0}; git clone {1} tests'.format(
+                    self.remote_workdir,
+                    str(self.testset.get(['discover', 'repository']))
+                )
+            )
             self.info('[execute] Running beakerlib tests')
+
             # Execute tests
             for test in self.tests:
-                self.execute_beakerlib_test(test, path)
+                self.execute_beakerlib_test(test)
 
     def report(self):
         """ Report results """
@@ -373,6 +434,12 @@ class TestSet(LoggerMixin):
 
     def finish(self):
         """ Finishing tasks """
+        # Remove source, it is in remote workdir also, no need for dupes
+        Command(['rm', '-rf', 'source']).run(cwd=self.cruncher.workdir)
+
+        # Archive remote workdir to artifacts
+        self.guest.archive(self.remote_workdir, os.path.join(self.workdir, 'workdir'), log='finish.log')
+
         # Keep the vm running
         if self.cruncher.option('keep-instance') or self.cruncher.option('ssh-host'):
             self.info("[finish] Guest kept running, use "
@@ -491,9 +558,9 @@ class Cruncher(gluetool.Module):
                 'help': 'Keep instance running, use ``ssh-host`` to connect back to te instance.',
                 'action': 'store_true'
             },
-            'workdir': {
-                'help': 'Use given workdir instead of current directory',
-                'default': '.'
+            'artifacts-dir': {
+                'help': 'Use given folder to store test artifacts (default: %(default)s)',
+                'default': 'artifacts'
             }
         })
     ]
@@ -567,7 +634,7 @@ class Cruncher(gluetool.Module):
         ])
 
         try:
-            Command(command).run(inspect=True)
+            Command(command).run(inspect=True, cwd=self.option('artifacts-dir'))
 
         except gluetool.GlueCommandError as error:
             # make sure that we remove the image file
@@ -583,14 +650,13 @@ class Cruncher(gluetool.Module):
         self.fmf_root = self.option('fmf-root')
         git_url = self.option('git-url')
         git_ref = self.option('git-ref')
-        workdir = self.option('workdir')
+        workdir = self.option('artifacts-dir')
 
         if self.fmf_root:
             self.info("Getting FMF metadata from local path '{}' ".format(self.fmf_root))
 
         elif git_url and git_ref:
             self.info("Getting FMF metadata from git repository '{}' ref '{}' ".format(git_url, git_ref))
-            Command(['rm', '-rf', 'source']).run(cwd=workdir)
             Command(['git', 'clone', '--depth=1', git_url, 'source' ]).run(cwd=workdir)
             Command(['git', 'fetch', 'origin', '{0}:{0}'.format(git_ref)]).run(cwd=os.path.join(workdir, 'source'))
             Command(['git', 'checkout', git_ref]).run(cwd=os.path.join(workdir, 'source'))
@@ -598,15 +664,19 @@ class Cruncher(gluetool.Module):
 
         else:
             self.info("Nothing to do, no FMF metadata provided")
+            return
 
         # init FMF trees
         try:
             tree = fmf.Tree(self.fmf_root)
+
         except fmf.utils.RootError:
             raise gluetool.GlueError('No FMF metadata found.')
 
         # FIXME: blow up if no tests to run
         # FIXME: other checks for fmf validity?
+
+        log_dict(self.info, "Discovered testsets", [testset.name for testset in list(tree.prune())])
 
         # Process each testset found in the fmf tree
         for testset in tree.climb():
