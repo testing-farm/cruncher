@@ -176,7 +176,7 @@ class Guest(LoggerMixin, object):
             log.close()
 
         if process.returncode != 0:
-            raise gluetool.GlueError("Playbook '{}' failed with return code '{}'".format(command, process.returncode))
+            raise gluetool.GlueError("Playbook '{}' failed with return code '{}'".format(playbook, process.returncode))
 
 
 class TestSetAdapter(ContextAdapter):
@@ -468,8 +468,11 @@ class Cruncher(gluetool.Module):
             'artifact-root-url': {
                 'help': 'Root of the URL to the artifacts',
             },
-            'ui-url': {
-                'help': 'URL to the user interface.'
+            'console-url': {
+                'help': 'URL to console user interface.'
+            },
+            'artifacts-url': {
+                'help': 'URL to artifacts interface.'
             }
         }),
         ('Copr artifact options', {
@@ -754,7 +757,7 @@ class Cruncher(gluetool.Module):
             })            
 
         message.update({
-            'url': '{}/pipeline/{}'.format(self.option('ui-url'), pipeline_id),
+            'url': '{}/pipeline/{}'.format(self.option('console-url'), pipeline_id),
         })
 
         log_dict(self.info, 'result message', message)

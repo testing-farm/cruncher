@@ -2,5 +2,7 @@
 image-copr-chroot-map = /opt/cruncher/configuration/chroot-image-map.yaml
 provision-script = /opt/cruncher/tools/standard-inventory-qcow2
 image-cache-dir = /opt/cruncher/images
-post-results-url = https://scheduler-testing-farm.apps.ci.centos.org/v0/result,https://stg.packit.dev/testing-farm/results
-ui-url = https://ui.testing-farm.io
+post-results-url = https://scheduler-testing-farm.apps.us-east-1.online-starter.openshift.com/v0/result,https://stg.packit.dev/testing-farm/results
+console-url = https://console-testing-farm.apps.ci.centos.org
+artifacts-url = https://artifacts-testing-farm.apps.ci.centos.org
+artifacts-dir = /opt/cruncher/artifacts
