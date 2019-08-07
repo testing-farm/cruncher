@@ -324,7 +324,7 @@ class TestSet(LoggerMixin):
         # Install all builds from copr repository
         self.guest.run(
             # pylint: disable=line-too-long
-            'dnf -q repoquery --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | tr "/" ":") | grep -v \\.src | xargs dnf -y install'
+            'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | tr "/" ":") | grep -v \\.src | xargs dnf -y install'
         )
 
     def download_git(self):
