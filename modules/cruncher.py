@@ -580,6 +580,10 @@ class Cruncher(gluetool.Module):
 
         self.results = []
 
+    @cached_property
+    def artifacts_dir(self):
+        return gluetool.utils.normalize_path(self.option('artifacts-dir'))
+
     def sanity(self):
 
         self.image = self.option('image-file')
@@ -600,8 +604,20 @@ class Cruncher(gluetool.Module):
 
         # Map image from copr repository
         if self.option('image-copr-chroot-map') and self.option('copr-chroot'):
-            image_url = render_template(SimplePatternMap(
-                self.option('image-copr-chroot-map'), logger=self.logger).match(self.option('copr-chroot')))
+            image_url = render_template(
+                SimplePatternMap(
+                    gluetool.utils.normalize_path(self.option('image-copr-chroot-map')),
+                    logger=self.logger
+                ).match(self.option('copr-chroot'))
+            )
+
+        # make sure artifacts dir exists early
+        try:
+            os.makedirs(self.artifacts_dir)
+        except OSError as e:
+            # Ignore artifact dir already exists
+            if e.errno not in [17]:
+                raise gluetool.GlueError("Could not create artifacts directory '{}': {} ".format(self.artifacts_dir, str(e)))
 
         # resolve image from URL
         if image_url:
@@ -616,7 +632,7 @@ class Cruncher(gluetool.Module):
         """
         Maps copr chroot to a specific image.
         """
-        cache_dir = self.option('image-cache-dir')
+        cache_dir = gluetool.utils.normalize_path(self.option('image-cache-dir'))
         image_name = os.path.basename(url)
         download_path = os.path.join(cache_dir, image_name)
 
@@ -653,17 +669,18 @@ class Cruncher(gluetool.Module):
         self.fmf_root = self.option('fmf-root')
         git_url = self.option('git-url')
         git_ref = self.option('git-ref')
-        workdir = self.option('artifacts-dir')
+        # FIXME: get rid of workdir
+        self.workdir = self.artifacts_dir
 
         if self.fmf_root:
             self.info("Getting FMF metadata from local path '{}' ".format(self.fmf_root))
 
         elif git_url and git_ref:
             self.info("Getting FMF metadata from git repository '{}' ref '{}' ".format(git_url, git_ref))
-            Command(['git', 'clone', '--depth=1', git_url, 'source' ]).run(cwd=workdir)
-            Command(['git', 'fetch', 'origin', '{0}:{0}'.format(git_ref)]).run(cwd=os.path.join(workdir, 'source'))
-            Command(['git', 'checkout', git_ref]).run(cwd=os.path.join(workdir, 'source'))
-            self.fmf_root = os.path.join(workdir, 'source')
+            Command(['git', 'clone', '--depth=1', git_url, 'source' ]).run(cwd=self.artifacts_dir)
+            Command(['git', 'fetch', 'origin', '{0}:{0}'.format(git_ref)]).run(cwd=os.path.join(self.artifacts_dir, 'source'))
+            Command(['git', 'checkout', git_ref]).run(cwd=os.path.join(self.artifacts_dir, 'source'))
+            self.fmf_root = os.path.join(self.artifacts_dir, 'source')
 
         else:
             self.info("Nothing to do, no FMF metadata provided")
@@ -756,9 +773,10 @@ class Cruncher(gluetool.Module):
                 'tests': self.results,
             })            
 
-        message.update({
-            'url': '{}/pipeline/{}'.format(self.option('console-url'), pipeline_id),
-        })
+        if self.option('console-url'):
+            message.update({
+                'url': '{}/pipeline/{}'.format(self.option('console-url'), pipeline_id),
+            })
 
         log_dict(self.info, 'result message', message)
 
