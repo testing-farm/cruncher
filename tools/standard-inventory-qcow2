@@ -550,25 +550,12 @@ def inv_host(image):
             if not os.path.exists(lock_file):
                 logger.error("Lock file is gone.")
                 break
-        else:
-            # Now wait for the parent process to go away, then kill the VM
-            try:
-                os.kill(ppid, 0)
-                os.kill(proc.pid, 0)
-            except OSError:
-                # logger.info("Either parent process or VM process is gone.")
-                break
     if diagnose:
         def _signal_handler(*args):
             logger.info("Diagnose ending.")
         signal.signal(signal.SIGTERM, _signal_handler)
         # logger.info("kill {0} # when finished to debug VM.".format(os.getpid()))
         signal.pause()
-    # Kill the qemu process
-    try:
-        os.kill(proc.pid, signal.SIGTERM)
-    except OSError:
-        pass
     shutil.rmtree(directory)
     sys.exit(0)
 

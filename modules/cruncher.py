@@ -75,13 +75,13 @@ class Guest(LoggerMixin, object):
             '-o', 'UserKnownHostsFile=/dev/null',
             '-o', 'LogLevel=ERROR',
             '-i', self.key,
-            '-P', self.port,
-            self.user_host,
-            from_remote_dir,
+            '-P{}'.format(self.port),
+            '{}:{}'.format(self.user_host, from_remote_dir),
             to_dir
         ]
 
-        with open(os.path.join(self.workdir, log), mode="a+") as log:
+        log_path = os.path.join(self.workdir, log)
+        with open(log_path, mode="a+") as log:
 
             log.write('# {}\n'.format(command))
 
@@ -93,7 +93,7 @@ class Guest(LoggerMixin, object):
                 log.flush()
 
         if process.returncode != 0:
-            raise gluetool.GlueError("Failed to archive artifacts, scp returned code '{}', see '{}' for details".format(process.returncode, log))
+            raise gluetool.GlueError("Failed to archive artifacts, scp returned code '{}', see '{}' for details".format(process.returncode, log_path))
 
 
     def run(self, command, pipe=False, log=None):
@@ -214,8 +214,14 @@ class TestSet(LoggerMixin):
         self.name = self.testset.name.replace('/', '-')[1:]
 
         # Workdir for the test set, based on main workdir
-        self.workdir = os.path.join(self.cruncher.option('artifacts-dir'), self.name)
-        os.makedirs(self.workdir)
+        self.workdir = os.path.join(self.cruncher.artifacts_dir, self.name)
+        try:
+            os.makedirs(self.workdir)
+        except OSError as e:
+            # Ignore artifact dir already exists
+            if e.errno not in [17]:
+                raise gluetool.GlueError("Could not create working directory '{}': {} ".format(self.workdir, str(e)))
+
         self.info("Testset working directory '{}'".format(self.workdir))
 
         # Execute step should be defined
@@ -281,6 +287,10 @@ class TestSet(LoggerMixin):
                 self.cruncher.option('ssh-port'),
                 self.workdir,
                 logger=self.logger)
+
+            # make sure remote workdir exits
+            self.guest.run('mkdir -p {}'.format(self.remote_workdir))
+
             return
 
         # Create a new instance using the provision script
@@ -288,7 +298,7 @@ class TestSet(LoggerMixin):
         command = ['python3', gluetool.utils.normalize_path(self.cruncher.option('provision-script')), self.cruncher.image]
         environment = os.environ.copy()
         # FIXME: not sure if so much handy ...
-        # environment.update({'TEST_DEBUG': '1'})
+        environment.update({'KEEP_INSTANCE': '1'})
         try:
             output = Command(command).run(env=environment, cwd=self.workdir)
         except gluetool.GlueCommandError:
@@ -308,6 +318,9 @@ class TestSet(LoggerMixin):
             host_details['ansible_port'],
             self.workdir,
             logger=self.logger)
+
+        # make sure remote workdir exits
+        self.guest.run('mkdir -p {}'.format(self.remote_workdir))
 
     def install_copr_build(self):
         """ Install packages from copr """
@@ -341,7 +354,7 @@ class TestSet(LoggerMixin):
 
         self.guest.run('rpm -q git >/dev/null || dnf -y install git')
         self.guest.run('rm -rf {1} && git clone --depth 1 {0} {1}'.format(url, self.source))
-        self.guest.run('cd {0} && git fetch origin {1}:{1} && git checkout ref'.format(self.source, ref))
+        self.guest.run('cd {0} && git fetch origin {1}:{1} && git checkout {1}'.format(self.source, ref))
 
         self.info("[prepare] Using cloned repository as working directory on the test machine")
         self.guest.set_home(self.source)
@@ -653,7 +666,7 @@ class Cruncher(gluetool.Module):
         ])
 
         try:
-            Command(command).run(inspect=True, cwd=self.option('artifacts-dir'))
+            Command(command).run(inspect=True, cwd=self.artifacts_dir)
 
         except gluetool.GlueCommandError as error:
             # make sure that we remove the image file
