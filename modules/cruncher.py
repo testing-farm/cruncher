@@ -336,10 +336,13 @@ class TestSet(LoggerMixin):
         self.guest.run('dnf -y copr enable {}'.format(self.cruncher.option('copr-name')))
 
         # Install all builds from copr repository
-        self.guest.run(
-            # pylint: disable=line-too-long
-            'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | tr "/" ":") | grep -v \\.src | xargs dnf -y install'
-        )
+        try:
+            self.guest.run(
+                # pylint: disable=line-too-long
+                'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | tr "/" ":") | grep -v \\.src | xargs dnf -y install --allowerasing'
+            )
+        except gluetool.GlueError:
+            raise gluetool.GlueError("Error installing copr build, see console output for details.")
 
     def download_git(self):
         """ Download git repository to the machine """
