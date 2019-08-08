@@ -661,7 +661,7 @@ class Cruncher(gluetool.Module):
         if os.path.exists(download_path):
             return download_path
 
-        self.info("Downloading image '{}' to '{}'".format(url, download_path))
+        self.info("Downloading image '{}'".format(url))
 
         command = ['curl']
 
