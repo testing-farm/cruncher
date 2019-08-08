@@ -512,7 +512,8 @@ class Cruncher(gluetool.Module):
                 'help': 'Use image according to copr chroot specified by the given mapping file'
             },
             'image-url': {
-                'help': 'Use image from given URL'
+                'help': 'Use image from given URL',
+                'default': 'https://dl.fedoraproject.org/pub/fedora/linux/releases/30/Cloud/x86_64/images/Fedora-Cloud-Base-30-1.2.x86_64.qcow2',
             },
             'image-file': {
                 'help': 'Use image from give file'
@@ -537,10 +538,11 @@ class Cruncher(gluetool.Module):
                 'help': 'URL to git repository with FMF L2 metadata.'
             },
             'git-ref': {
-                'help': 'Git reference to checkout'
+                'help': 'Git reference to checkout',
+                'default': 'master'
             },
             'git-commit-sha': {
-                'help': 'Git commit SHA',
+                'help': 'Git commit SHA'
             },
             'git-repo-name': {
                 'help': 'Git repository name'
@@ -556,7 +558,7 @@ class Cruncher(gluetool.Module):
         }),
         ('Reporting options', {
             'pipeline-id': {
-                'help': 'A globally unique ID which identifies the test.',
+                'help': 'A globally unique ID which identifies the test.'
             },
             'post-results': {
                 'help': 'Post results to URL defined in ``post-results-url``',
