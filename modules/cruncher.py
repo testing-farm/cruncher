@@ -151,6 +151,7 @@ class Guest(LoggerMixin, object):
             '--ssh-extra-args=\'-p{}\''.format(self.port),
             '--scp-extra-args=\'-P{}\''.format(self.port),
             '--sftp-extra-args=\'-P{}\''.format(self.port),
+            '--extra-vars=ansible_python_interpreter=python3',
             playbook
         ]
 
@@ -402,7 +403,7 @@ class TestSet(LoggerMixin):
         else:
             result = "error"
 
-        self.results[test.name] = result
+        return result
 
     def execute(self):
         """ Execute discovered tests """
@@ -423,23 +424,33 @@ class TestSet(LoggerMixin):
             self.results.append({
                 'name': self.testset.name,
                 'result': result,
-                # we need to find out how to save the logs
-                'log': 'FIXME'
             })
 
         # Beakerlib
         if execute.get('how') == 'beakerlib':
             self.guest.run(
-                'rm -rf {0}; cd {0}; git clone {1} tests'.format(
+                'rm -rf {0}; mkdir {0}; cd {0}; git clone {1} tests'.format(
                     self.remote_workdir,
                     str(self.testset.get(['discover', 'repository']))
                 )
             )
             self.info('[execute] Running beakerlib tests')
 
-            # Execute tests
+            # Execute tests and get results
+            results = []
             for test in self.tests:
-                self.execute_beakerlib_test(test)
+                results.append(self.execute_beakerlib_test(test))
+
+            # Count overall result
+            if 'fail' in results or 'error' in results:
+                result = 'fail'
+            else:
+                result = 'pass'
+
+            self.results.append({
+                'name': self.testset.name,
+                'result': result,
+            })
 
     def report(self):
         """ Report results """
@@ -475,9 +486,6 @@ class Cruncher(gluetool.Module):
 
     options = [
         ('Service related options', {
-            'artifact-dir': {
-                'help': 'Directory where to save artifacts from testing on localhost. Requires ``pipeline-id`` options.',
-            },
             'artifact-root-url': {
                 'help': 'Root of the URL to the artifacts',
             },
@@ -743,7 +751,7 @@ class Cruncher(gluetool.Module):
                 result_count = len(self.results)
                 message['message'] = '{} {} from {} failed'.format(
                     failed,
-                    'test' if result_count == 1 else 'tests',
+                    'testset' if result_count == 1 else 'testsets',
                     result_count
                 )
 
