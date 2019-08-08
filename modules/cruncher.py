@@ -358,7 +358,7 @@ class TestSet(LoggerMixin):
 
         self.guest.run('rpm -q git >/dev/null || dnf -y install git')
         self.guest.run('rm -rf {1} && git clone --depth 1 {0} {1}'.format(url, self.source))
-        self.guest.run('cd {0} && git fetch origin {1}:{1} && git checkout {1}'.format(self.source, ref))
+        self.guest.run('cd {} && git fetch origin {}:ref && git checkout ref'.format(self.source, ref))
 
         self.info("[prepare] Using cloned repository as working directory on the test machine")
         self.guest.set_home(self.source)
@@ -704,8 +704,8 @@ class Cruncher(gluetool.Module):
         elif git_url and git_ref:
             self.info("Getting FMF metadata from git repository '{}' ref '{}' ".format(git_url, git_ref))
             Command(['git', 'clone', '--depth=1', git_url, 'source' ]).run(cwd=self.artifacts_dir)
-            Command(['git', 'fetch', 'origin', '{0}:{0}'.format(git_ref)]).run(cwd=os.path.join(self.artifacts_dir, 'source'))
-            Command(['git', 'checkout', git_ref]).run(cwd=os.path.join(self.artifacts_dir, 'source'))
+            Command(['git', 'fetch', 'origin', '{0}:ref'.format(git_ref)]).run(cwd=os.path.join(self.artifacts_dir, 'source'))
+            Command(['git', 'checkout', 'ref']).run(cwd=os.path.join(self.artifacts_dir, 'source'))
             self.fmf_root = os.path.join(self.artifacts_dir, 'source')
 
         else:
