@@ -5,4 +5,3 @@ image-cache-dir = /opt/cruncher/images
 post-results-url = https://scheduler-testing-farm.apps.ci.centos.org/v0/result,https://stg.packit.dev/testing-farm/results
 console-url = https://console-testing-farm.apps.ci.centos.org
 artifacts-url = https://artifacts-testing-farm.apps.ci.centos.org
-artifacts-dir = /opt/cruncher/artifacts

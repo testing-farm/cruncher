@@ -1,5 +1,5 @@
 [default]
 colors = yes
-debug-file = /var/log/cruncher-debug.txt
+debug-file = cruncher-debug.txt
 module-config-path = /opt/cruncher/configuration
 module-path = /opt/cruncher/modules
