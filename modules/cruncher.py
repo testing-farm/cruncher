@@ -442,10 +442,10 @@ class TestSet(LoggerMixin):
                 results.append(self.execute_beakerlib_test(test))
 
             # Count overall result
-            if 'fail' in results or 'error' in results:
-                result = 'fail'
+            if 'failed' in results or 'error' in results:
+                result = 'failed'
             else:
-                result = 'pass'
+                result = 'passed'
 
             self.results.append({
                 'name': self.testset.name,
@@ -743,11 +743,11 @@ class Cruncher(gluetool.Module):
             message['message'] = "No tests were defined in FMF metadata."
 
         else:
-            result = 'pass'
-            failed = sum([r['result'] == 'fail' for r in self.results])
+            result = 'passed'
+            failed = sum([r['result'] == 'failed' for r in self.results])
 
             if failed > 0:
-                result = 'fail'
+                result = 'failed'
                 result_count = len(self.results)
                 message['message'] = '{} {} from {} failed'.format(
                     failed,
