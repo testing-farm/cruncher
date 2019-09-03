@@ -159,6 +159,8 @@ class Guest(LoggerMixin, object):
             log = open(os.path.join(self.workdir, log), mode="a+")
             log.write('# ansible-playbook -i test_machine {}\n'.format(playbook))
 
+        self.debug(' '.join(command))
+
         print(colorama.Fore.CYAN + '# ansible-playbook -i test_machine {}'.format(playbook))
 
         stdout = str()
@@ -350,7 +352,7 @@ class TestSet(LoggerMixin):
         url = self.cruncher.option('git-url')
         ref = self.cruncher.option('git-ref')
 
-        if not url and not ref:
+        if not url or not ref:
             self.debug('No git repository for download specified, skipping download')
             return
 
@@ -399,12 +401,15 @@ class TestSet(LoggerMixin):
         self.guest.run('cd {0}; mkdir -p {1}; BEAKERLIB_DIR={1} {2}'.format(
             test_dir, logs_dir, test.get('test')), log='execute.log')
         journal = self.guest.run('cat {}'.format(os.path.join(logs_dir, 'journal.txt')))
-        if re.search("OVERALL RESULT: PASS", journal):
-            result = "pass"
-        elif re.search("OVERALL RESULT: FAIL", journal):
-            result = "fail"
+        self.info('journal: {}'.format(journal))
+        if re.search('OVERALL RESULT: PASS', journal):
+            self.info('overall is passed')
+            result = 'passed'
+        elif re.search('OVERALL RESULT: FAIL', journal):
+            self.info('overall is failed')
+            result = 'failed'
         else:
-            result = "error"
+            result = 'error'
 
         return result
 
@@ -418,11 +423,11 @@ class TestSet(LoggerMixin):
             try:
                 for command in execute['commands']:
                     self.guest.run(command, log='execute.log')
-                result = "pass"
+                result = 'passed'
 
             except gluetool.GlueError as error:
                 self.error(error)
-                result = "fail"
+                result = 'failed'
 
             self.results.append({
                 'name': self.testset.name,
@@ -443,6 +448,8 @@ class TestSet(LoggerMixin):
             results = []
             for test in self.tests:
                 results.append(self.execute_beakerlib_test(test))
+
+            self.info(results)
 
             # Count overall result
             if 'failed' in results or 'error' in results:
@@ -561,10 +568,13 @@ class Cruncher(gluetool.Module):
                 'help': 'A globally unique ID which identifies the test.'
             },
             'post-results': {
-                'help': 'Post results to URL defined in ``post-results-url``',
+                'help': 'Post results to URL defined in ``post-results-url``.',
                 'action': 'store_true'
             },
-           'post-results-url': {
+            'post-results-token': {
+                'help': 'Secret token injected into results json.'
+            },
+            'post-results-url': {
                 'help': 'URL(s) for posting results.',
                 'action': 'append'
            }
@@ -611,48 +621,11 @@ class Cruncher(gluetool.Module):
         return gluetool.utils.normalize_path(self.option('artifacts-dir'))
 
     def sanity(self):
-
-        self.image = self.option('image-file')
-
         # copr-chroot and copr-name are required
         if (self.option('copr-chroot') and not self.option('copr-name')) or \
                 (self.option('copr-name') and not self.option('copr-chroot')):
             raise gluetool.utils.IncompatibleOptionsError(
                'Insufficient information about copr build supplied, both chroot and repository name need to be specified.')
-
-        # Use image from path
-        if self.image:
-            self.info("Using image from file '{}'".format(self.image))
-            return
-
-        # Use image from url
-        image_url = self.option('image-url')
-
-        # Map image from copr repository
-        if self.option('image-copr-chroot-map') and self.option('copr-chroot'):
-            image_url = render_template(
-                SimplePatternMap(
-                    gluetool.utils.normalize_path(self.option('image-copr-chroot-map')),
-                    logger=self.logger
-                ).match(self.option('copr-chroot'))
-            )
-
-        # make sure artifacts dir exists early
-        try:
-            os.makedirs(self.artifacts_dir)
-        except OSError as e:
-            # Ignore artifact dir already exists
-            if e.errno not in [17]:
-                raise gluetool.GlueError("Could not create artifacts directory '{}': {} ".format(self.artifacts_dir, str(e)))
-
-        # resolve image from URL
-        if image_url:
-            self.image = self.image_from_url(image_url)
-            return
-
-        if not image_url and not self.option('ssh-host'):
-            raise gluetool.utils.IncompatibleOptionsError(
-                'No image, SSH host or copr repository specified. Cannot continue.')
 
     def image_from_url(self, url):
         """
@@ -689,6 +662,43 @@ class Cruncher(gluetool.Module):
 
         return download_path
 
+    def resolve_image(self):
+        self.image = self.option('image-file')
+
+        # Use image from path
+        if self.image:
+            self.info("Using image from file '{}'".format(self.image))
+            return
+
+        # Use image from url
+        image_url = self.option('image-url')
+
+        # Map image from copr repository
+        if self.option('image-copr-chroot-map') and self.option('copr-chroot'):
+            image_url = render_template(
+                SimplePatternMap(
+                    gluetool.utils.normalize_path(self.option('image-copr-chroot-map')),
+                    logger=self.logger
+                ).match(self.option('copr-chroot'))
+            )
+
+        # make sure artifacts dir exists early
+        try:
+            os.makedirs(self.artifacts_dir)
+        except OSError as e:
+            # Ignore artifact dir already exists
+            if e.errno not in [17]:
+                raise gluetool.GlueError("Could not create artifacts directory '{}': {} ".format(self.artifacts_dir, str(e)))
+
+        # resolve image from URL
+        if image_url:
+            self.image = self.image_from_url(image_url)
+            return
+
+        if not image_url and not self.option('ssh-host'):
+            raise gluetool.utils.IncompatibleOptionsError(
+                'No image, SSH host or copr repository specified. Cannot continue.')
+
     def execute(self):
         """ Process all testsets defined """
         # Initialize the metadata tree
@@ -718,6 +728,9 @@ class Cruncher(gluetool.Module):
 
         except fmf.utils.RootError:
             raise gluetool.GlueError('No FMF metadata found.')
+
+        # resolve image
+        self.resolve_image()
 
         # FIXME: blow up if no tests to run
         # FIXME: other checks for fmf validity?
@@ -749,6 +762,7 @@ class Cruncher(gluetool.Module):
 
         else:
             result = 'passed'
+
             failed = sum([r['result'] == 'failed' for r in self.results])
 
             if failed > 0:
@@ -771,7 +785,8 @@ class Cruncher(gluetool.Module):
             message.update({
                 'pipeline': {
                     'id': pipeline_id
-                }
+                },
+                'token': self.option('post-results-token')
             })
 
         if self.option('copr-name'):

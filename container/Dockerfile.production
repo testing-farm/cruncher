@@ -6,9 +6,9 @@ RUN pip install gluetool fmf
 
 RUN mkdir -p /etc/gluetool.d /opt/cruncher /opt/cruncher/images
 
-COPY configuration/container/gluetool /etc/gluetool.d/gluetool
-COPY configuration/container  /opt/cruncher/configuration
-COPY modules  /opt/cruncher/modules
-COPY tools  /opt/cruncher/tools
+COPY configuration/production/gluetool /etc/gluetool.d/gluetool
+COPY configuration/production /opt/cruncher/configuration
+COPY modules /opt/cruncher/modules
+COPY tools /opt/cruncher/tools
 
 ENTRYPOINT ["/usr/bin/gluetool"]
