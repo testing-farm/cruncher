@@ -627,6 +627,14 @@ class Cruncher(gluetool.Module):
             raise gluetool.utils.IncompatibleOptionsError(
                'Insufficient information about copr build supplied, both chroot and repository name need to be specified.')
 
+        # make sure artifacts dir exists early
+        try:
+            os.makedirs(self.artifacts_dir)
+        except OSError as e:
+            # Ignore artifact dir already exists
+            if e.errno not in [17]:
+                raise gluetool.GlueError("Could not create artifacts directory '{}': {} ".format(self.artifacts_dir, str(e)))
+
     def image_from_url(self, url):
         """
         Maps copr chroot to a specific image.
@@ -681,14 +689,6 @@ class Cruncher(gluetool.Module):
                     logger=self.logger
                 ).match(self.option('copr-chroot'))
             )
-
-        # make sure artifacts dir exists early
-        try:
-            os.makedirs(self.artifacts_dir)
-        except OSError as e:
-            # Ignore artifact dir already exists
-            if e.errno not in [17]:
-                raise gluetool.GlueError("Could not create artifacts directory '{}': {} ".format(self.artifacts_dir, str(e)))
 
         # resolve image from URL
         if image_url:
