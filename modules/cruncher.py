@@ -620,6 +620,10 @@ class Cruncher(gluetool.Module):
     def artifacts_dir(self):
         return gluetool.utils.normalize_path(self.option('artifacts-dir'))
 
+    @cached_property
+    def image_cache_dir(self):
+        return gluetool.utils.normalize_path(self.option('image-cache-dir'))
+
     def sanity(self):
         # copr-chroot and copr-name are required
         if (self.option('copr-chroot') and not self.option('copr-name')) or \
@@ -635,13 +639,20 @@ class Cruncher(gluetool.Module):
             if e.errno not in [17]:
                 raise gluetool.GlueError("Could not create artifacts directory '{}': {} ".format(self.artifacts_dir, str(e)))
 
+        # make sure image cache dir exists early
+        try:
+            os.makedirs(self.image_cache_dir)
+        except OSError as e:
+            # Ignore dir already exists
+            if e.errno not in [17]:
+                raise gluetool.GlueError("Could not create image cache directory '{}': {} ".format(self.image_cache_dir, str(e)))
+
     def image_from_url(self, url):
         """
         Maps copr chroot to a specific image.
         """
-        cache_dir = gluetool.utils.normalize_path(self.option('image-cache-dir'))
         image_name = os.path.basename(url)
-        download_path = os.path.join(cache_dir, image_name)
+        download_path = os.path.join(self.image_cache_dir, image_name)
 
         # check if image already exits
         if os.path.exists(download_path):
