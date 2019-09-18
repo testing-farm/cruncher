@@ -373,11 +373,9 @@ class TestSet(LoggerMixin):
         # Download git sources
         self.download_git()
 
-        # Handle the prepare step
+        # Handle the prepare step for ansible
         prepare = self.testset.get('prepare')
-        if not prepare:
-            return
-        if prepare.get('how') == 'ansible':
+        if prepare and prepare.get('how') == 'ansible':
             self.info("[prepare] Installing Ansible requirements on test machine")
             self.guest.run('dnf -y install python', log='prepare.log')
             for playbook in prepare.get('playbooks'):
