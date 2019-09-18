@@ -398,7 +398,7 @@ class TestSet(LoggerMixin):
         logs_dir = os.path.join(self.remote_workdir, 'logs', test.name.lstrip('/').replace('/', '-'))
         self.guest.run('cd {0}; mkdir -p {1}; BEAKERLIB_DIR={1} {2}'.format(
             test_dir, logs_dir, test.get('test')), log='execute.log')
-        journal = self.guest.run('cat {}'.format(os.path.join(logs_dir, 'journal.txt')))
+        journal = self.guest.run('cat {}; sleep 1'.format(os.path.join(logs_dir, 'journal.txt')))
         self.info('journal: {}'.format(journal))
         if re.search('OVERALL RESULT: PASS', journal):
             self.info('overall is passed')
@@ -744,10 +744,11 @@ class Cruncher(gluetool.Module):
         # FIXME: blow up if no tests to run
         # FIXME: other checks for fmf validity?
 
-        log_dict(self.info, "Discovered testsets", [testset.name for testset in list(tree.prune())])
+        testsets = list(tree.prune(keys=['execute']))
+        log_dict(self.info, "Discovered testsets", [testset.name for testset in testsets])
 
         # Process each testset found in the fmf tree
-        for testset in tree.prune(keys=['execute']):
+        for testset in testsets:
             testset = TestSet(self, testset, cruncher=self)
             self.results.extend(testset.go())
 
