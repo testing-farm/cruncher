@@ -749,7 +749,7 @@ class Cruncher(gluetool.Module):
         log_dict(self.info, "Discovered testsets", [testset.name for testset in list(tree.prune())])
 
         # Process each testset found in the fmf tree
-        for testset in tree.climb():
+        for testset in tree.prune(keys=['execute']):
             testset = TestSet(self, testset, cruncher=self)
             self.results.extend(testset.go())
 
