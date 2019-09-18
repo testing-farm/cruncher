@@ -744,10 +744,11 @@ class Cruncher(gluetool.Module):
         # FIXME: blow up if no tests to run
         # FIXME: other checks for fmf validity?
 
-        log_dict(self.info, "Discovered testsets", [testset.name for testset in list(tree.prune())])
+        testsets = list(tree.prune(keys=['execute']))
+        log_dict(self.info, "Discovered testsets", [testset.name for testset in testsets])
 
         # Process each testset found in the fmf tree
-        for testset in tree.prune(keys=['execute']):
+        for testset in testsets:
             testset = TestSet(self, testset, cruncher=self)
             self.results.extend(testset.go())
 
