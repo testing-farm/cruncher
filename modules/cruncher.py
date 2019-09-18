@@ -398,7 +398,7 @@ class TestSet(LoggerMixin):
         logs_dir = os.path.join(self.remote_workdir, 'logs', test.name.lstrip('/').replace('/', '-'))
         self.guest.run('cd {0}; mkdir -p {1}; BEAKERLIB_DIR={1} {2}'.format(
             test_dir, logs_dir, test.get('test')), log='execute.log')
-        journal = self.guest.run('cat {}'.format(os.path.join(logs_dir, 'journal.txt')))
+        journal = self.guest.run('cat {}; sleep 1'.format(os.path.join(logs_dir, 'journal.txt')))
         self.info('journal: {}'.format(journal))
         if re.search('OVERALL RESULT: PASS', journal):
             self.info('overall is passed')
