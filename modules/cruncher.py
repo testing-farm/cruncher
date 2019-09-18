@@ -829,7 +829,10 @@ class Cruncher(gluetool.Module):
                 'url': '{}/pipeline/{}'.format(self.option('console-url'), pipeline_id),
             })
 
-        log_dict(self.info, 'result message', message)
+        # sanitize the message - remove the token
+        message_sanitized = message.copy()
+        message_sanitized['token'] = 'XXXXXXXXXXXXXXXXXXXXXXXXXX'
+        log_dict(self.info, 'result message', message_sanitized)
 
         post_results_urls = gluetool.utils.normalize_multistring_option(self.option('post-results-url'))
 
