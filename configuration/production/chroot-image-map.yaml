@@ -9,10 +9,9 @@
 - 'fedora-30-x86_64': >
    https://kojipkgs.fedoraproject.org/compose/cloud/latest-Fedora-Cloud-30/compose/Cloud/x86_64/images/{{ "https://kojipkgs.fedoraproject.org/compose/cloud/latest-Fedora-Cloud-30/COMPOSE_ID" | get_url_content | replace("Fedora-Cloud", "Fedora-Cloud-Base") }}.x86_64.qcow2
 
-# Hmm, seems F31 images not yet around, use rawhide instead
 - 'fedora-31-x86_64': >
-   https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/{{ "https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/COMPOSE_ID" | get_url_content | replace("Rawhide", "Cloud-Base-Rawhide") }}.x86_64.qcow2
+   https://kojipkgs.fedoraproject.org/compose/branched/latest-Fedora-31/compose/Cloud/x86_64/images/{{ "https://kojipkgs.fedoraproject.org/compose/branched/latest-Fedora-31/COMPOSE_ID" | get_url_content | replace("Fedora", "Fedora-Cloud-Base") }}.x86_64.qcow2
 
-# Rawhide images change frequently. To find the Rawhide image, we lookup the compose ID and construct the image name according to it.
+# Rawhide images can become unstable. Use a qualified image from current Fedora CI pipeline.
 - 'fedora-rawhide-x86_64': >
-   https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/{{ "https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/COMPOSE_ID" | get_url_content | replace("Rawhide", "Cloud-Base-Rawhide") }}.x86_64.qcow2
+   https://jenkins-continuous-infra.apps.ci.centos.org/view/Fedora%20All%20Packages%20Pipeline/job/fedora-rawhide-image-test/lastSuccessfulBuild/artifact/Fedora-Rawhide.qcow2
