@@ -414,13 +414,27 @@ class TestSet(LoggerMixin):
     def execute(self):
         """ Execute discovered tests """
         execute = self.testset.get('execute')
+
         # Shell
-        if execute.get('how') == 'shell':
+        if execute.get('how', 'shell') == 'shell':
             self.info('[execute] Running shell commands')
 
+            # Currently we only support one script or a list of scripts
+            # TODO: Add support for multi-line script as well (see L2 spec)
+            if 'script' in execute:
+                scripts = execute['script']
+            elif 'commands' in execute:
+                scripts = execute['commands']
+                self.warn("The 'command' key was changed to 'script', please update your test.")
+            else:
+                raise gluetool.GlueError("No 'script' defined in the execute step.")
+
+            if not isinstance(scripts, list):
+                scripts = [scripts]
+
             try:
-                for command in execute['commands']:
-                    self.guest.run(command, log='execute.log')
+                for script in scripts:
+                    self.guest.run(script, log='execute.log')
                 result = 'passed'
 
             except gluetool.GlueError as error:
