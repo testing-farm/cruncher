@@ -378,7 +378,10 @@ class TestSet(LoggerMixin):
         if prepare and prepare.get('how') == 'ansible':
             self.info("[prepare] Installing Ansible requirements on test machine")
             self.guest.run('dnf -y install python', log='prepare.log')
-            for playbook in prepare.get('playbooks'):
+            playbooks = prepare.get('playbooks')
+            if not isinstance(playbooks, list):
+                playbooks = [playbooks]
+            for playbook in playbooks:
                 self.info("[prepare] Applying Ansible playbook '{}'".format(playbook))
                 self.guest.run_playbook(os.path.join(self.cruncher.fmf_root, playbook), log='prepare.log')
 
