@@ -858,7 +858,7 @@ class Cruncher(gluetool.Module):
             with requests(logger=self.logger) as req:
                 response = req.post(url, json=message)
 
-            if response.status_code != 200:
+            if response.status_code not in [200, 202]:
                 raise gluetool.GlueError('Could not post results to "{}"'.format(url))
 
     def destroy(self, failure):
