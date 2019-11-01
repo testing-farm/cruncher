@@ -1,4 +1,4 @@
-FROM fedora:latest
+FROM fedora:30
 
 RUN dnf -y install python-pip curl ansible copr-cli git qemu-kvm fmf genisoimage git
 
