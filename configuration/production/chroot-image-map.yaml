@@ -15,3 +15,9 @@
 # Rawhide images can become unstable. Use a qualified image from current Fedora CI pipeline.
 - 'fedora-rawhide-x86_64': >
    https://jenkins-continuous-infra.apps.ci.centos.org/view/Fedora%20All%20Packages%20Pipeline/job/fedora-rawhide-image-test/lastSuccessfulBuild/artifact/Fedora-Rawhide.qcow2
+
+# Epel-8 tested on CentOS stream
+- 'epel-8-x86_64': https://artifacts-testing-farm.apps.ci.centos.org/images/centos-stream.qcow2
+
+# CentOS stream
+- 'centos-stream-x86_64': https://artifacts-testing-farm.apps.ci.centos.org/images/centos-stream.qcow2
