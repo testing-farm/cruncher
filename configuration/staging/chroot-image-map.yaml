@@ -10,7 +10,11 @@
    https://kojipkgs.fedoraproject.org/compose/cloud/latest-Fedora-Cloud-30/compose/Cloud/x86_64/images/{{ "https://kojipkgs.fedoraproject.org/compose/cloud/latest-Fedora-Cloud-30/COMPOSE_ID" | get_url_content | replace("Fedora-Cloud", "Fedora-Cloud-Base") }}.x86_64.qcow2
 
 - 'fedora-31-x86_64': >
-   https://kojipkgs.fedoraproject.org/compose/branched/latest-Fedora-31/compose/Cloud/x86_64/images/{{ "https://kojipkgs.fedoraproject.org/compose/branched/latest-Fedora-31/COMPOSE_ID" | get_url_content | replace("Fedora", "Fedora-Cloud-Base") }}.x86_64.qcow2
+   https://kojipkgs.fedoraproject.org/compose/cloud/latest-Fedora-Cloud-31/compose/Cloud/x86_64/images/{{ "https://kojipkgs.fedoraproject.org/compose/cloud/latest-Fedora-Cloud-31/COMPOSE_ID" | get_url_content | replace("Fedora-Cloud", "Fedora-Cloud-Base") }}.x86_64.qcow2
+
+# Note: 32 not yet branched seems (2019-11-04)
+# - 'fedora-32-x86_64': >
+#   https://kojipkgs.fedoraproject.org/compose/branched/latest-Fedora-32/compose/Cloud/x86_64/images/{{ "https://kojipkgs.fedoraproject.org/compose/branched/latest-Fedora-32/COMPOSE_ID" | get_url_content | replace("Fedora", "Fedora-Cloud-Base") }}.x86_64.qcow2
 
 # Rawhide images can become unstable. Use a qualified image from current Fedora CI pipeline.
 - 'fedora-rawhide-x86_64': >
