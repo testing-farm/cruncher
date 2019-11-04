@@ -20,6 +20,9 @@
 - 'fedora-rawhide-x86_64': >
    https://jenkins-continuous-infra.apps.ci.centos.org/view/Fedora%20All%20Packages%20Pipeline/job/fedora-rawhide-image-test/lastSuccessfulBuild/artifact/Fedora-Rawhide.qcow2
 
+# Epel-7 tested on CentOS 7
+- 'epel-7-x86_64': https://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2
+
 # Epel-8 tested on CentOS stream
 - 'epel-8-x86_64': https://artifacts-testing-farm.apps.ci.centos.org/images/centos-stream.qcow2
 
