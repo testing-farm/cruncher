@@ -67,6 +67,34 @@ class Guest(LoggerMixin, object):
     def set_home(self, path):
         self.home = path
 
+    def copy(self, local_dir, remote_dir, log):
+        command = [
+            'scp',
+            '-r',
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'LogLevel=ERROR',
+            '-i', self.key,
+            '-P{}'.format(self.port),
+            local_dir,
+            '{}:{}'.format(self.user_host, remote_dir),
+        ]
+
+        log_path = os.path.join(self.workdir, log)
+        with open(log_path, mode="a+") as log:
+
+            log.write('# {}\n'.format(command))
+
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+            while process.poll() is None:
+                line = process.stdout.readline()
+                log.write(line)
+                log.flush()
+
+        if process.returncode != 0:
+            raise gluetool.GlueError("Failed to archive artifacts, scp returned code '{}', see '{}' for details".format(process.returncode, log_path))
+
     def archive(self, from_remote_dir, to_dir, log):
         command = [
             'scp',
@@ -247,32 +275,39 @@ class TestSet(LoggerMixin):
         discover = self.testset.get('discover')
         if not discover:
             return
-        # FMF
+
+        # default discover path is the current directory
+        discover_path = '.'
+
+        # discover via FMF
         if discover.get('how') == 'fmf':
-            # Clone the git repository
-            repository = str(discover.get('repository'))
 
-            if not repository:
-                raise gluetool.GlueError("No repository defined in the discover step")
+            # discover from remote repository
+            if discover.get('repository'):
+                discover_path = 'beakerlib-tests'
 
-            self.info("[discover] Checking repository '{}'".format(repository))
+                # Clone the git repository
+                repository = str(discover.get('repository'))
 
-            try:
-                command = ['git', 'clone', repository, 'beakerlib-tests']
-                Command(command).run(cwd=self.workdir)
+                self.info("[discover] Checking repository '{}'".format(repository))
 
-            except gluetool.GlueCommandError as error:
-                log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
-                raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
+                try:
+                    command = ['git', 'clone', repository, discover_path]
+                    Command(command).run(cwd=self.workdir)
+
+                except gluetool.GlueCommandError as error:
+                    log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
+                    raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
 
             # Pick tests based on the fmf filter
-            tree = fmf.Tree(os.path.join(self.workdir, 'beakerlib-tests'))
+            tree = fmf.Tree(os.path.join(self.workdir, discover_path))
             filters = discover.get('filter')
             self.tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
 
-            # Remove the tests, as they were only for discovering tests to run ...
-            # They will be available in workdir from the test machine
-            Command(['rm', '-rf', 'beakerlib-tests']).run(cwd=self.workdir)
+            if discover.get('repository'):
+                # Remove the tests, as they were only for discovering tests to run ...
+                # They will be available in workdir from the test machine
+                Command(['rm', '-rf', discover_path]).run(cwd=self.workdir)
 
             log_dict(self.info, "[discover] Discovered tests", [test.name for test in self.tests])
 
@@ -346,11 +381,16 @@ class TestSet(LoggerMixin):
         except gluetool.GlueError:
             raise gluetool.GlueError("Error installing copr build, see console output for details.")
 
-    def download_git(self):
+    def download_fmf(self):
         """ Download git repository to the machine """
         # Nothing to do if git-url and git-ref not specified
         url = self.cruncher.option('git-url')
         ref = self.cruncher.option('git-ref')
+        local = self.cruncher.option('fmf-root') and gluetool.utils.normalize_path(self.cruncher.option('fmf-root'))
+
+        if local:
+            self.guest.run('rm -rf {}'.format(self.source))
+            self.guest.copy(local, self.source, log='prepare.log')
 
         if not url or not ref:
             self.debug('No git repository for download specified, skipping download')
@@ -367,11 +407,11 @@ class TestSet(LoggerMixin):
 
     def prepare(self):
         """ Prepare the guest for testing """
+        # Make sure we have downloaded FMF source to remote machine
+        self.download_fmf()
+
         # Install copr build
         self.install_copr_build()
-
-        # Download git sources
-        self.download_git()
 
         # Handle the prepare step for ansible
         prepare = self.testset.get('prepare')
@@ -397,7 +437,12 @@ class TestSet(LoggerMixin):
     def execute_beakerlib_test(self, test):
         """ Execute a beakerlib test """
         self.info("[execute] Running test '{}'".format(test.name))
-        test_dir = os.path.join(self.remote_workdir, 'tests', (test.get('path') or test.name).lstrip('/'))
+        # in case of remote tests, they are in 'tests' folder, otherwise they are in git source
+        discover = self.testset.get('discover')
+        if discover and discover.get('repository'):
+            test_dir = os.path.join(self.remote_workdir, 'tests', (test.get('path') or test.name).lstrip('/'))
+        else:
+            test_dir = os.path.join(self.source, (test.get('path') or test.name).lstrip('/'))
         logs_dir = os.path.join(self.remote_workdir, 'logs', test.name.lstrip('/').replace('/', '-'))
         self.guest.run('cd {0}; mkdir -p {1}; BEAKERLIB_DIR={1} {2}'.format(
             test_dir, logs_dir, test.get('test')), log='execute.log')
@@ -451,13 +496,15 @@ class TestSet(LoggerMixin):
 
         # Beakerlib
         if execute.get('how') == 'beakerlib':
-            self.guest.run(
-                'rm -rf {0}; mkdir {0}; cd {0}; git clone {1} tests'.format(
-                    self.remote_workdir,
-                    str(self.testset.get(['discover', 'repository']))
+            # Clone tests from remote location
+            if self.testset.get(['discover', 'repository']):
+                self.guest.run(
+                    'rm -rf {0}; mkdir {0}; cd {0}; git clone {1} tests'.format(
+                        self.remote_workdir,
+                        str(self.testset.get(['discover', 'repository']))
+                    )
                 )
-            )
-            self.info('[execute] Running beakerlib tests')
+                self.info('[execute] Running beakerlib tests')
 
             # Execute tests and get results
             results = []
@@ -627,6 +674,7 @@ class Cruncher(gluetool.Module):
 
         colorama.init(autoreset=True)
 
+        self.testsets = []
         self.results = []
 
     @cached_property
@@ -763,9 +811,11 @@ class Cruncher(gluetool.Module):
         testsets = list(tree.prune(keys=['execute']))
         log_dict(self.info, "Discovered testsets", [testset.name for testset in testsets])
 
-        # Process each testset found in the fmf tree
         for testset in testsets:
-            testset = TestSet(self, testset, cruncher=self)
+            self.testsets.append(TestSet(self, testset, cruncher=self))
+
+        # Process each testset found in the fmf tree
+        for testset in self.testsets:
             self.results.extend(testset.go())
 
         if self.results:
@@ -865,6 +915,10 @@ class Cruncher(gluetool.Module):
         """ Cleanup and notification tasks """
         # post results about testing
         self.post_results(failure)
+
+        # run finish for all testsets
+        for testset in self.testsets:
+            testset.finish()
 
         # Remove workdir if requested
         if self.option('cleanup') and TestSet._workdir:
