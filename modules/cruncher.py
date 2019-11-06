@@ -399,10 +399,26 @@ class TestSet(LoggerMixin):
         self.info("[prepare] Using cloned repository as working directory on the test machine")
         self.guest.set_home(self.source)
 
+    def download_yum_metadata():
+        """ Create DNF cache: in case of flaky network, try it again """
+        count = 3
+        while count > 0:
+            try:
+                self.guest.run('dnf makecache')
+                break
+            except gluetool.GlueError:
+                count -= 1
+                self.warn('[prepare] [%d/3] Unable to obtain repository metadata, trying again.' % 3 - count)
+        else:
+            # This is executed when the while conditions turns false
+            raise gluetool.GlueError("We could not obtain repository metadata: this is an error.")
+
     def prepare(self):
         """ Prepare the guest for testing """
         # Make sure we have downloaded FMF source to remote machine
         self.download_fmf()
+
+        self.download_yum_metadata()
 
         # Install copr build
         self.install_copr_build()
