@@ -846,7 +846,7 @@ class Cruncher(gluetool.Module):
                 result_count = len(self.results)
                 message['message'] = '{} {} from {} failed'.format(
                     failed,
-                    'testset' if result_count == 1 else 'testsets',
+                    'plan' if result_count == 1 else 'plans',
                     result_count
                 )
 
