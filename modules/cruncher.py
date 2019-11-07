@@ -277,7 +277,7 @@ class TestSet(LoggerMixin):
             return
 
         # default discover path is the current directory
-        discover_path = '.'
+        discover_path = 'source'
 
         # discover via FMF
         if discover.get('how') == 'fmf':
@@ -299,15 +299,9 @@ class TestSet(LoggerMixin):
                     log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
                     raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
 
-            # Pick tests based on the fmf filter
-            tree = fmf.Tree(os.path.join(self.workdir, discover_path))
+            tree = fmf.Tree(os.path.join(discover_path))
             filters = discover.get('filter')
             self.tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
-
-            if discover.get('repository'):
-                # Remove the tests, as they were only for discovering tests to run ...
-                # They will be available in workdir from the test machine
-                Command(['rm', '-rf', discover_path]).run(cwd=self.workdir)
 
             log_dict(self.info, "[discover] Discovered tests", [test.name for test in self.tests])
 
@@ -592,7 +586,8 @@ class Cruncher(gluetool.Module):
         }),
         ('Image download options', {
             'image-cache-dir': {
-                'help': 'Image download path'
+                'help': 'Image download path',
+                'default': os.path.abspath('.')
             },
             'no-progress': {
                 'help': 'Do not show image download progress',
@@ -703,6 +698,8 @@ class Cruncher(gluetool.Module):
             # Ignore artifact dir already exists
             if e.errno not in [17]:
                 raise gluetool.GlueError("Could not create artifacts directory '{}': {} ".format(self.artifacts_dir, str(e)))
+        finally:
+            os.chdir(self.artifacts_dir)
 
         # make sure image cache dir exists early
         try:
