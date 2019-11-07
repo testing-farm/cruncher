@@ -532,7 +532,8 @@ class TestSet(LoggerMixin):
         """ Finishing tasks """
 
         # Archive remote workdir to artifacts
-        self.guest.archive(self.remote_workdir, os.path.join(self.workdir, 'workdir'), log='finish.log')
+        if self.guest:
+            self.guest.archive(self.remote_workdir, os.path.join(self.workdir, 'workdir'), log='finish.log')
 
         # Keep the vm running
         if self.cruncher.option('keep-instance') or self.cruncher.option('ssh-host'):
