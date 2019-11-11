@@ -399,7 +399,7 @@ class TestSet(LoggerMixin):
         self.info("[prepare] Using cloned repository as working directory on the test machine")
         self.guest.set_home(self.source)
 
-    def download_yum_metadata():
+    def download_yum_metadata(self):
         """ Create DNF cache: in case of flaky network, try it again """
         count = 3
         while count > 0:
@@ -415,10 +415,11 @@ class TestSet(LoggerMixin):
 
     def prepare(self):
         """ Prepare the guest for testing """
+        # Prepare yum cache with retries
+        self.download_yum_metadata()
+
         # Make sure we have downloaded FMF source to remote machine
         self.download_fmf()
-
-        self.download_yum_metadata()
 
         # Install copr build
         self.install_copr_build()
