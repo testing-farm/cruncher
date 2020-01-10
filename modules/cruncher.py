@@ -259,6 +259,17 @@ class TestSet(LoggerMixin):
         if not self.testset.get('execute'):
             raise gluetool.GlueError('No "execute" step in the testset {}'.format(testset.name))
 
+    def relevant(self):
+        """ Check whether given test set is relevant """
+        # By default testset is relevant for all artifacts
+        artifacts = self.testset.get('artifact')
+        if artifacts is None:
+            return True
+        # Check if 'pull-request' is included in the list
+        if not isinstance(artifacts, list):
+            artifacts = [artifacts]
+        return 'pull-request' in artifacts
+
     def go(self):
         """ Go and process the testset step by step """
         self.discover()
@@ -834,6 +845,10 @@ class Cruncher(gluetool.Module):
 
         # Process each testset found in the fmf tree
         for testset in self.testsets:
+            # Skip irrelevant testsets
+            if not testset.relevant():
+                self.info("Skipping irrelevant testset {}".format(testset.name))
+                continue
             self.results.extend(testset.go())
 
         if self.results:
