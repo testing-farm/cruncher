@@ -310,7 +310,7 @@ class TestSet(LoggerMixin):
                     log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
                     raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
 
-            tree = fmf.Tree(os.path.join(discover_path))
+            tree = fmf.Tree(os.path.join(os.path.join(self.workdir, discover_path)))
             filters = discover.get('filter')
             self.tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
 
@@ -713,6 +713,7 @@ class Cruncher(gluetool.Module):
         return gluetool.utils.normalize_path(self.option('image-cache-dir'))
 
     def sanity(self):
+        self.fmf_root = gluetool.utils.normalize_path_option(self.option('fmf-root'))
         # copr-chroot and copr-name are required
         if (self.option('copr-chroot') and not self.option('copr-name')) or \
                 (self.option('copr-name') and not self.option('copr-chroot')):
@@ -803,7 +804,6 @@ class Cruncher(gluetool.Module):
     def execute(self):
         """ Process all testsets defined """
         # Initialize the metadata tree
-        self.fmf_root = self.option('fmf-root')
         git_url = self.option('git-url')
         git_ref = self.option('git-ref')
         # FIXME: get rid of workdir
