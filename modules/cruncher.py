@@ -801,6 +801,38 @@ class Cruncher(gluetool.Module):
             raise gluetool.utils.IncompatibleOptionsError(
                 'No image, SSH host or copr repository specified. Cannot continue.')
 
+    def install_test(self):
+        """ Runs Installation tast only """
+
+        # resolve image
+        self.resolve_image()
+
+        class InstallTestSet(object):
+            name = '/install/copr-build'
+
+            def get(self, key):
+                if key == 'execute':
+                    return True
+                if key == 'summary':
+                    return 'Test copr build installation'
+
+        install_test = TestSet(self, InstallTestSet(), cruncher=self)
+
+        install_test.provision()
+
+        try:
+            install_test.install_copr_build()
+            self.results.append({
+                'name': '/install/copr-build',
+                'result': 'passed',
+            })
+
+        except gluetool.GlueError:
+            self.results.append({
+                'name': '/install/copr-build',
+                'result': 'failed',
+            })
+
     def execute(self):
         """ Process all testsets defined """
         # Initialize the metadata tree
@@ -824,32 +856,34 @@ class Cruncher(gluetool.Module):
             self.info("Nothing to do, no FMF metadata provided")
             return
 
-        # init FMF trees
+        # init FMF tree
         try:
             tree = fmf.Tree(self.fmf_root)
 
+            # resolve image
+            self.resolve_image()
+
+            # FIXME: blow up if no tests to run
+            # FIXME: other checks for fmf validity?
+
+            testsets = list(tree.prune(keys=['execute']))
+            log_dict(self.info, "Discovered testsets", [testset.name for testset in testsets])
+
+            for testset in testsets:
+                self.testsets.append(TestSet(self, testset, cruncher=self))
+
+            # Process each testset found in the fmf tree
+            for testset in self.testsets:
+                # Skip irrelevant testsets
+                if not testset.relevant():
+                    self.info("Skipping irrelevant testset {}".format(testset.name))
+                    continue
+                self.results.extend(testset.go())
+
+        # no FMF tree - run copr build install test only
         except fmf.utils.RootError:
-            raise gluetool.GlueError('No FMF metadata found.')
-
-        # resolve image
-        self.resolve_image()
-
-        # FIXME: blow up if no tests to run
-        # FIXME: other checks for fmf validity?
-
-        testsets = list(tree.prune(keys=['execute']))
-        log_dict(self.info, "Discovered testsets", [testset.name for testset in testsets])
-
-        for testset in testsets:
-            self.testsets.append(TestSet(self, testset, cruncher=self))
-
-        # Process each testset found in the fmf tree
-        for testset in self.testsets:
-            # Skip irrelevant testsets
-            if not testset.relevant():
-                self.info("Skipping irrelevant testset {}".format(testset.name))
-                continue
-            self.results.extend(testset.go())
+            # run installation only
+            self.install_test()
 
         if self.results:
             log_dict(self.info, "Test results", self.results)
