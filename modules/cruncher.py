@@ -450,7 +450,7 @@ class TestSet(LoggerMixin):
         # Prepare for beakerlib testing
         if self.testset.get(['execute', 'how']) == 'beakerlib':
             self.info('[prepare] Installing beakerlib and tests')
-            self.guest.run('dnf -y install beakerlib git', log='prepare.log')
+            self.guest.run('dnf -y install beakerlib git beakerlib-libraries', log='prepare.log')
             self.guest.run(
                 'echo -e "#!/bin/bash\ntrue" > /usr/bin/rhts-environment.sh',
                 log='prepare.log'
