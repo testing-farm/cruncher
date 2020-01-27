@@ -1,4 +1,4 @@
 [default]
-image-copr-chroot-map = configuration/localhost/chroot-image-map.yaml
-provision-script = tools/standard-inventory-qcow2
+image-copr-chroot-map = /home/mvadkert/git/gitlab.com/cruncher/configuration/localhost/chroot-image-map.yaml
+provision-script =  /home/mvadkert/git/gitlab.com/cruncher/tools/standard-inventory-qcow2
 image-cache-dir = images
