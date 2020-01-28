@@ -293,6 +293,8 @@ class TestSet(LoggerMixin):
         # discover via FMF
         if discover.get('how') == 'fmf':
 
+            path = self.cruncher.fmf_root
+
             # discover from remote repository
             if discover.get('repository'):
                 discover_path = 'beakerlib-tests'
@@ -310,7 +312,9 @@ class TestSet(LoggerMixin):
                     log_blob(self.cruncher.error, "Tail of stderr '{}'".format(' '.join(command)), error.output.stderr)
                     raise gluetool.GlueError("Failed to clone the git repository '{}'".format(repository))
 
-            tree = fmf.Tree(os.path.join(os.path.join(self.workdir, discover_path)))
+                path = os.path.join(self.workdir, discover_path)
+
+            tree = fmf.Tree(path)
             filters = discover.get('filter')
             self.tests = list(tree.prune(keys=['test'], filters=[filters] if filters else []))
 
