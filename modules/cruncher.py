@@ -378,6 +378,19 @@ class TestSet(LoggerMixin):
 
         self.info('[prepare] Installing builds from copr')
 
+        chroot = self.cruncher.option('copr-chroot')
+
+        # hack dnf for yum yuck (cruncher is dead anyway!)
+        if chroot and (chroot.startswith('epel-6') or chroot.startswith('epel-7')):
+            self.info('[prepare] Hacking environment to work for CentOS 6/7')
+            self.guest.run('ln -s $(which yum) /usr/bin/dnf')
+            self.guest.run('yum -y install yum-plugin-copr')
+
+        # for epel first enable epel repo
+        if chroot and (chroot.startswith('epel-') or chroot.startswith('centos-')):
+            self.info('[prepare] Enabling EPEL by default for CentOS/EPEL builds')
+            self.guest.run('dnf -y install epel-release')
+
         # Enable copr repository and install all builds from there
         self.guest.run('dnf -y copr enable {}'.format(self.cruncher.option('copr-name')))
 
