@@ -379,27 +379,28 @@ class TestSet(LoggerMixin):
         self.info('[prepare] Installing builds from copr')
 
         chroot = self.cruncher.option('copr-chroot')
-
-        # hack dnf for yum yuck (cruncher is dead anyway!)
-        if chroot and (chroot.startswith('epel-6') or chroot.startswith('epel-7')):
-            self.info('[prepare] Hacking environment to work for CentOS 6/7')
-            self.guest.run('ln -s $(which yum) /usr/bin/dnf')
-            self.guest.run('yum -y install yum-plugin-copr')
-
-        # for epel first enable epel repo
-        if chroot and (chroot.startswith('epel-') or chroot.startswith('centos-')):
-            self.info('[prepare] Enabling EPEL by default for CentOS/EPEL builds')
-            self.guest.run('dnf -y install epel-release')
+        project = os.path.dirname(self.cruncher.option('copr-name'))
+        repo = os.path.basename(self.cruncher.option('copr-name'))
 
         # Enable copr repository and install all builds from there
-        self.guest.run('dnf -y copr enable {}'.format(self.cruncher.option('copr-name')))
+        if chroot.startswith('epel-6'):
+            self.guest.run('cd /etc/yum.repos.d && curl -LO https://copr.fedorainfracloud.org/coprs/{}/repo/epel-6/{}-epel-6.repo'.format(
+                self.cruncher.option('copr-name'),
+                repo
+            ))
+        else:
+            self.guest.run('dnf -y copr enable {}'.format(self.cruncher.option('copr-name')))
 
         # Install all builds from copr repository
         try:
-            self.guest.run(
+            if chroot.startswith('epel-6') or chroot.startswith('epel-7'):
                 # pylint: disable=line-too-long
-                'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | tr "/" ":") | grep -v \\.src | xargs dnf -y install --allowerasing'
-            )
+                command = "repoquery --disablerepo=* --enablerepo=copr:copr.fedorainfracloud.org:{}:{} '*' | grep -v \\.src | xargs dnf -y install".format(project, repo)
+            else:
+                # pylint: disable=line-too-long
+                command = 'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | tr "/" ":") | grep -v \\.src | xargs dnf -y install --allowerasing'
+
+            self.guest.run(command)
         except gluetool.GlueError:
             raise gluetool.GlueError("Error installing copr build, see console output for details.")
 
@@ -421,14 +422,46 @@ class TestSet(LoggerMixin):
         self.info("[prepare] Download git repository '{}' ref '{}' to '{}' on test machine".format(url, ref, self.source))
 
         self.guest.run('rpm -q git >/dev/null || dnf -y install git')
-        self.guest.run('rm -rf {1} && git clone --depth 1 {0} {1}'.format(url, self.source))
-        self.guest.run('cd {} && git fetch origin {}:ref && git checkout ref'.format(self.source, ref))
+
+        chroot = self.cruncher.option('copr-chroot')
+        if chroot.startswith('epel-6') or chroot.startswith('epel-7'):
+            self.guest.run('rm -rf {1} && git clone {0} {1}'.format(url, self.source))
+        else:
+            self.guest.run('rm -rf {1} && git clone --depth 1 {0} {1}'.format(url, self.source))
+
+
+        if chroot.startswith('epel-6'):
+            self.guest.run('cd {} && git checkout {}'.format(self.source, ref))
+        else:
+            self.guest.run('cd {} && git fetch origin {}:ref && git checkout ref'.format(self.source, ref))
 
         self.info("[prepare] Using cloned repository as working directory on the test machine")
         self.guest.set_home(self.source)
 
     def download_yum_metadata(self):
         """ Create DNF cache: in case of flaky network, try it again """
+        chroot = self.cruncher.option('copr-chroot')
+
+        if chroot:
+            # hack dnf for yum yuck (cruncher is dead anyway!)
+            if chroot.startswith('epel-6') or chroot.startswith('epel-7'):
+                self.info('[prepare] Hacking environment to work for CentOS 6/7')
+                self.guest.run('ln -fs $(which yum) /usr/bin/dnf')
+                self.guest.run('yum -y install yum-utils')
+
+            # for epel first enable epel repo
+            if chroot.startswith('epel-') or chroot.startswith('centos-'):
+                self.info('[prepare] Enabling EPEL by default for CentOS/EPEL builds')
+                self.guest.run('dnf -y install epel-release')
+
+            # copr plugin for EPEL7
+            if chroot.startswith('epel-7'):
+                self.info('[prepare] Installing yum-plugin-copr for CentOS 7')
+                self.guest.run('yum -y install yum-plugin-copr')
+
+        if chroot.startswith('epel-') or chroot.startswith('centos-'):
+            return
+
         count = 3
         while count > 0:
             try:
@@ -436,7 +469,7 @@ class TestSet(LoggerMixin):
                 break
             except gluetool.GlueError:
                 count -= 1
-                self.warn('[prepare] [%d/3] Unable to obtain repository metadata, trying again.' % 3 - count)
+                self.warn('[prepare] [{}/3] Unable to obtain repository metadata, trying again.'.format(3-count))
         else:
             # This is executed when the while conditions turns false
             raise gluetool.GlueError("We could not obtain repository metadata: this is an error.")
@@ -972,7 +1005,7 @@ class Cruncher(gluetool.Module):
         if self.results:
             message.update({
                 'tests': self.results,
-            })            
+            })
 
         if self.option('console-url'):
             message.update({
