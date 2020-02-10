@@ -398,7 +398,7 @@ class TestSet(LoggerMixin):
                 command = "repoquery --disablerepo=* --enablerepo=copr:copr.fedorainfracloud.org:{}:{} '*' | grep -v \\.src | xargs dnf -y install".format(project, repo)
             else:
                 # pylint: disable=line-too-long
-                command = 'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | tr "/" ":") | grep -v \\.src | xargs dnf -y install --allowerasing'
+                command = 'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | grep "packit/" | tr "/" ":") | grep -v \\.src | xargs dnf -y install --allowerasing'
 
             self.guest.run(command)
         except gluetool.GlueError:
@@ -407,35 +407,15 @@ class TestSet(LoggerMixin):
     def download_fmf(self):
         """ Download git repository to the machine """
         # Nothing to do if git-url and git-ref not specified
-        url = self.cruncher.option('git-url')
-        ref = self.cruncher.option('git-ref')
         local = self.cruncher.option('fmf-root') and gluetool.utils.normalize_path(self.cruncher.option('fmf-root'))
 
+        self.guest.run('rm -rf {}'.format(self.source))
+
         if local:
-            self.guest.run('rm -rf {}'.format(self.source))
             self.guest.copy(local, self.source, log='prepare.log')
-
-        if not url or not ref:
-            self.debug('No git repository for download specified, skipping download')
-            return
-
-        self.info("[prepare] Download git repository '{}' ref '{}' to '{}' on test machine".format(url, ref, self.source))
-
-        self.guest.run('rpm -q git >/dev/null || dnf -y install git')
-
-        chroot = self.cruncher.option('copr-chroot')
-        if chroot.startswith('epel-6') or chroot.startswith('epel-7'):
-            self.guest.run('rm -rf {1} && git clone {0} {1}'.format(url, self.source))
         else:
-            self.guest.run('rm -rf {1} && git clone --depth 1 {0} {1}'.format(url, self.source))
+            self.guest.copy('source', self.source, log='prepare.log')
 
-
-        if chroot.startswith('epel-6'):
-            self.guest.run('cd {} && git checkout {}'.format(self.source, ref))
-        else:
-            self.guest.run('cd {} && git fetch origin {}:ref && git checkout ref'.format(self.source, ref))
-
-        self.info("[prepare] Using cloned repository as working directory on the test machine")
         self.guest.set_home(self.source)
 
     def download_yum_metadata(self):
@@ -482,14 +462,16 @@ class TestSet(LoggerMixin):
         # Make sure we have downloaded FMF source to remote machine
         self.download_fmf()
 
-        # Install copr build
-        self.install_copr_build()
+        chroot = self.cruncher.option('copr-chroot')
 
         # Handle the prepare step for ansible
         prepare = self.testset.get('prepare')
         if prepare and prepare.get('how') == 'ansible':
             self.info("[prepare] Installing Ansible requirements on test machine")
-            self.guest.run('dnf -y install python', log='prepare.log')
+            if chroot and chroot.startswith('epel-8'):
+                self.guest.run('dnf -y install python3', log='prepare.log')
+            else:
+                self.guest.run('dnf -y install python', log='prepare.log')
             playbooks = prepare.get('playbooks')
             if not isinstance(playbooks, list):
                 playbooks = [playbooks]
@@ -505,6 +487,9 @@ class TestSet(LoggerMixin):
                 'echo -e "#!/bin/bash\ntrue" > /usr/bin/rhts-environment.sh',
                 log='prepare.log'
             ) # FIXME
+
+        # Install copr build
+        self.install_copr_build()
 
     def execute_beakerlib_test(self, test):
         """ Execute a beakerlib test """
@@ -900,7 +885,7 @@ class Cruncher(gluetool.Module):
         elif git_url and git_ref:
             self.info("Getting FMF metadata from git repository '{}' ref '{}' ".format(git_url, git_ref))
             Command(['rm', '-rf', 'source']).run(cwd=self.artifacts_dir)
-            Command(['git', 'clone', '--depth=1', git_url, 'source' ]).run(cwd=self.artifacts_dir)
+            Command(['git', 'clone', '--depth=1', git_url, 'source']).run(cwd=self.artifacts_dir)
             Command(['git', 'fetch', 'origin', '{0}:ref'.format(git_ref)]).run(cwd=os.path.join(self.artifacts_dir, 'source'))
             Command(['git', 'checkout', 'ref']).run(cwd=os.path.join(self.artifacts_dir, 'source'))
             self.fmf_root = os.path.join(self.artifacts_dir, 'source')
