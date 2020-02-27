@@ -238,8 +238,13 @@ class TestSet(LoggerMixin):
         self.tests = None
         self.results = []
         self.guest = None
-        self.source = '~/git-source'
+        if cruncher.option('copr-chroot'):
+            self.source = '~/git-source'
+        else:
+            self.source = '~/'
         self.remote_workdir = '~/workdir'
+        # Nothing to do if git-url and git-ref not specified
+        self.local = self.cruncher.fmf_root
 
         # Dashed name of the testset, ignore first dash ...
         self.name = self.testset.name.replace('/', '-')[1:]
@@ -382,6 +387,10 @@ class TestSet(LoggerMixin):
         project = os.path.dirname(self.cruncher.option('copr-name'))
         repo = os.path.basename(self.cruncher.option('copr-name'))
 
+        # nothing to do ...
+        if not chroot:
+            return
+
         # Enable copr repository and install all builds from there
         if chroot.startswith('epel-6'):
             self.guest.run('cd /etc/yum.repos.d && curl -LO https://copr.fedorainfracloud.org/coprs/{}/repo/epel-6/{}-epel-6.repo'.format(
@@ -406,14 +415,10 @@ class TestSet(LoggerMixin):
 
     def download_fmf(self):
         """ Download git repository to the machine """
-        # Nothing to do if git-url and git-ref not specified
-        local = self.cruncher.option('fmf-root') and gluetool.utils.normalize_path(self.cruncher.option('fmf-root'))
-
-        self.guest.run('rm -rf {}'.format(self.source))
-
-        if local:
-            self.guest.copy(local, self.source, log='prepare.log')
+        if self.local:
+            self.guest.copy(self.local, self.source, log='prepare.log')
         else:
+            self.guest.run('rm -rf {}'.format(self.source))
             self.guest.copy('source', self.source, log='prepare.log')
 
         self.guest.set_home(self.source)
@@ -439,8 +444,8 @@ class TestSet(LoggerMixin):
                 self.info('[prepare] Installing yum-plugin-copr for CentOS 7')
                 self.guest.run('yum -y install yum-plugin-copr')
 
-        if chroot.startswith('epel-') or chroot.startswith('centos-'):
-            return
+            if chroot.startswith('epel-') or chroot.startswith('centos-'):
+                return
 
         count = 3
         while count > 0:
@@ -478,6 +483,12 @@ class TestSet(LoggerMixin):
             for playbook in playbooks:
                 self.info("[prepare] Applying Ansible playbook '{}'".format(playbook))
                 self.guest.run_playbook(os.path.join(self.cruncher.fmf_root, playbook), log='prepare.log')
+        if prepare and prepare.get('script'):
+            scripts = prepare.get('script')
+            if not isinstance(scripts, list):
+                scripts = [scripts]
+            for script in scripts:
+                self.guest.run(script, log='prepare.log')
 
         # Prepare for beakerlib testing
         if self.testset.get(['execute', 'how']) == 'beakerlib':
@@ -751,7 +762,8 @@ class Cruncher(gluetool.Module):
         return gluetool.utils.normalize_path(self.option('image-cache-dir'))
 
     def sanity(self):
-        self.fmf_root = gluetool.utils.normalize_path_option(self.option('fmf-root'))
+        self.fmf_root = gluetool.utils.normalize_path(self.option('fmf-root')) if self.option('fmf-root') else None
+
         # copr-chroot and copr-name are required
         if (self.option('copr-chroot') and not self.option('copr-name')) or \
                 (self.option('copr-name') and not self.option('copr-chroot')):
