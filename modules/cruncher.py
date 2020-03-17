@@ -383,9 +383,14 @@ class TestSet(LoggerMixin):
 
         self.info('[prepare] Installing builds from copr')
 
+        # WORKAROUND for packit bug in copr-name missing copr repo part ...
+        copr_name = self.cruncher.option('copr-name')
+        if '/' not in copr_name:
+            copr_name = os.path.join('packit', copr_name)
+
         chroot = self.cruncher.option('copr-chroot')
-        project = os.path.dirname(self.cruncher.option('copr-name'))
-        repo = os.path.basename(self.cruncher.option('copr-name'))
+        project = os.path.dirname(copr_name)
+        repo = os.path.basename(copr_name)
 
         # nothing to do ...
         if not chroot:
@@ -394,11 +399,11 @@ class TestSet(LoggerMixin):
         # Enable copr repository and install all builds from there
         if chroot.startswith('epel-6'):
             self.guest.run('cd /etc/yum.repos.d && curl -LO https://copr.fedorainfracloud.org/coprs/{}/repo/epel-6/{}-epel-6.repo'.format(
-                self.cruncher.option('copr-name'),
+                copr_name,
                 repo
             ))
         else:
-            self.guest.run('dnf -y copr enable {}'.format(self.cruncher.option('copr-name')))
+            self.guest.run('dnf -y copr enable {}'.format(copr_name))
 
         # Install all builds from copr repository
         try:
