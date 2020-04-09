@@ -407,12 +407,16 @@ class TestSet(LoggerMixin):
 
         # Install all builds from copr repository
         try:
+            if project.startswith("@"):
+                # This is a group name, and needs a change
+                project = project.replace("@", "group_", 1)
+
             if chroot.startswith('epel-6') or chroot.startswith('epel-7'):
                 # pylint: disable=line-too-long
                 command = "repoquery --disablerepo=* --enablerepo=copr:copr.fedorainfracloud.org:{}:{} '*' | grep -v \\.src | xargs dnf -y install".format(project, repo)
             else:
                 # pylint: disable=line-too-long
-                command = 'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | grep "packit/" | tr "/" ":") | grep -v \\.src | xargs dnf -y install --allowerasing'
+                command = 'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | grep "{}/{}" | tr "/" ":") | grep -v \\.src | xargs dnf -y install --allowerasing'.format(project, repo)
 
             self.guest.run(command)
         except gluetool.GlueError:
