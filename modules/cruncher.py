@@ -347,7 +347,7 @@ class TestSet(LoggerMixin):
 
         # Create a new instance using the provision script
         self.info("[provision] Booting image '{}'".format(self.cruncher.image))
-        command = ['python3', gluetool.utils.normalize_path(self.cruncher.option('provision-script')), self.cruncher.image]
+        command = ['python3', self.cruncher.provision_script, self.cruncher.image]
         environment = os.environ.copy()
         # FIXME: not sure if so much handy ...
         environment.update({'KEEP_INSTANCE': '1'})
@@ -770,6 +770,18 @@ class Cruncher(gluetool.Module):
     def image_cache_dir(self):
         return gluetool.utils.normalize_path(self.option('image-cache-dir'))
 
+    @cached_property
+    def image_copr_chroot_map(self):
+        if self.option('image-copr-chroot-map'):
+            return gluetool.utils.normalize_path(self.option('image-copr-chroot-map'))
+        return None
+
+    @cached_property
+    def provision_script(self):
+        if self.option('provision-script'):
+            return gluetool.utils.normalize_path(self.option('provision-script'))
+        return None
+
     def sanity(self):
         self.fmf_root = gluetool.utils.normalize_path(self.option('fmf-root')) if self.option('fmf-root') else None
 
@@ -778,6 +790,12 @@ class Cruncher(gluetool.Module):
                 (self.option('copr-name') and not self.option('copr-chroot')):
             raise gluetool.utils.IncompatibleOptionsError(
                'Insufficient information about copr build supplied, both chroot and repository name need to be specified.')
+
+        # let's print the given settings, but also initialize them early, as we chdir later ...
+        log_dict(self.debug, 'settings', {
+            'image-copr-chroot-map': self.image_copr_chroot_map,
+            'provision-script': self.provision_script
+        })
 
         # make sure artifacts dir exists early
         try:
@@ -843,10 +861,10 @@ class Cruncher(gluetool.Module):
         image_url = self.option('image-url')
 
         # Map image from copr repository
-        if self.option('image-copr-chroot-map') and self.option('copr-chroot'):
+        if self.image_copr_chroot_map and self.option('copr-chroot'):
             image_url = render_template(
                 SimplePatternMap(
-                    gluetool.utils.normalize_path(self.option('image-copr-chroot-map')),
+                    self.image_copr_chroot_map,
                     logger=self.logger
                 ).match(self.option('copr-chroot'))
             )
