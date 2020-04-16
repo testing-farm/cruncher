@@ -924,7 +924,7 @@ class Cruncher(gluetool.Module):
         elif git_url and git_ref:
             self.info("Getting FMF metadata from git repository '{}' ref '{}' ".format(git_url, git_ref))
             Command(['rm', '-rf', 'source']).run(cwd=self.artifacts_dir)
-            Command(['git', 'clone', '--depth=1', git_url, 'source']).run(cwd=self.artifacts_dir)
+            Command(['git', 'clone', git_url, 'source']).run(cwd=self.artifacts_dir)
             Command(['git', 'fetch', 'origin', '{0}:ref'.format(git_ref)]).run(cwd=os.path.join(self.artifacts_dir, 'source'))
             Command(['git', 'checkout', 'ref']).run(cwd=os.path.join(self.artifacts_dir, 'source'))
             self.fmf_root = os.path.join(self.artifacts_dir, 'source')
