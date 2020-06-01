@@ -500,7 +500,7 @@ class TestSet(LoggerMixin):
                 self.guest.run(script, log='prepare.log')
 
         # Prepare for beakerlib testing
-        if self.testset.get(['execute', 'how']) == 'beakerlib':
+        if self.testset.get(['execute', 'how']).startswith('beakerlib'):
             self.info('[prepare] Installing beakerlib and tests')
             self.guest.run('dnf -y install beakerlib git beakerlib-libraries', log='prepare.log')
             self.guest.run(
@@ -541,7 +541,7 @@ class TestSet(LoggerMixin):
         execute = self.testset.get('execute')
 
         # Shell
-        if execute.get('how', 'shell') == 'shell':
+        if execute.get('how', 'shell').startswith('shell'):
             self.info('[execute] Running shell commands')
 
             # Currently we only support one script or a list of scripts
@@ -572,7 +572,7 @@ class TestSet(LoggerMixin):
             })
 
         # Beakerlib
-        if execute.get('how') == 'beakerlib':
+        if execute.get('how').startswith('beakerlib'):
             # Clone tests from remote location
             if self.testset.get(['discover', 'repository']):
                 self.guest.run(
