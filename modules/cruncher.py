@@ -419,8 +419,9 @@ class TestSet(LoggerMixin):
                 command = 'dnf -q repoquery --latest 1 --disablerepo=* --enablerepo=copr:$(dnf -y copr list enabled | grep "{}/{}" | tr "/" ":") | grep -v \\.src | xargs dnf -y install --allowerasing'.format(project, repo)
 
             self.guest.run(command)
-        except gluetool.GlueError:
-            raise gluetool.GlueError("Error installing copr build, see console output for details.")
+        except gluetool.GlueCommandError as error:
+            log_blob(self.error, "Copr builds fails to install", error.output.stderr)
+            raise gluetool.GlueError("Failed installing copr build, cannot continue.")
 
     def download_fmf(self):
         """ Download git repository to the machine """
